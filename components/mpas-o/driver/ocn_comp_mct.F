@@ -49,6 +49,10 @@ module ocn_comp_mct
    use ocn_frazil_forcing
    use ocn_surface_land_ice_fluxes
    use ocn_diagnostics
+   use ocn_tracer_short_wave_absorption
+   use ocn_tracer_short_wave_absorption_variable
+   use ocn_tracer_ecosys
+   use ocn_tracer_surface_restoring
 
 !
 ! !PUBLIC MEMBER FUNCTIONS:
@@ -193,6 +197,10 @@ contains
 
     real (kind=RKIND) :: dt
     type (MPAS_timeInterval_type) :: timeStep
+
+    logical, pointer :: config_use_ecosysTracers
+    logical, pointer :: config_use_activeTracers_surface_restoring
+    logical, pointer :: config_use_surface_salinity_monthly_restoring
 
     ! Added for coupling interval initialization
     integer, pointer :: index_avgZonalSSHGradient, index_avgMeridionalSSHGradient
@@ -722,6 +730,34 @@ contains
     call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)
     write(stderrUnit,*) 'Initial time ', trim(timeStamp)
 
+    currTime = mpas_get_clock_time(domain % clock, MPAS_NOW, ierr)
+    call mpas_get_time(curr_time=currTime, dateTimeString=timeStamp, ierr=ierr)
+    write(stderrUnit,*) 'Initial time ', trim(timeStamp)
+
+    ! read initial data required for variable shortwave
+    call mpas_timer_start('io_shortwave',.false.)
+    call ocn_get_shortWaveData(domain_ptr % streamManager, domain, domain % clock, .true.)
+    call mpas_timer_stop('io_shortwave')
+
+    ! read initial data required for ecosys forcing
+    call mpas_pool_get_config(domain % configs, 'config_use_ecosysTracers', config_use_ecosysTracers)
+    if (config_use_ecosysTracers) then
+      call mpas_timer_start('io_ecosys',.false.)
+      call ocn_get_ecosysData(domain_ptr % streamManager, domain, domain % clock, .true.)
+      call mpas_timer_stop('io_ecosys')
+    endif
+
+    ! read initial data required for monthly surface salinity restoring
+    call mpas_pool_get_config(domain % configs, 'config_use_activeTracers_surface_restoring',  &
+                                                 config_use_activeTracers_surface_restoring)
+    call mpas_pool_get_config(domain % configs, 'config_use_surface_salinity_monthly_restoring',  &
+                                                 config_use_surface_salinity_monthly_restoring)
+    if (config_use_activeTracers_surface_restoring .and. config_use_surface_salinity_monthly_restoring) then
+      call mpas_timer_start('io_monthly_surface_salinity',.false.)
+      call ocn_get_surfaceSalinityData(domain_ptr % streamManager, domain, domain % clock, .true.)
+      call mpas_timer_stop('io_monthly_surface_salinity')
+    endif
+
     itimestep = 0
 
     ! Reset all output alarms, to prevent intial time step from writing any output, unless it's ringing.
@@ -793,7 +829,12 @@ contains
       integer :: iam, ierr, streamDirection
       logical :: streamActive, debugOn
       logical, pointer :: config_write_output_on_startup
+      logical, pointer :: config_use_ecosysTracers
+      logical, pointer :: config_use_activeTracers_surface_restoring
+      logical, pointer :: config_use_surface_salinity_monthly_restoring
       character (len=StrKIND), pointer :: config_restart_timestamp_name
+      character (len=StrKIND), pointer :: config_sw_absorption_type
+      character (len=StrKIND), pointer :: config_forcing_restart_file
 
       ! Added for coupling interval initialization
       integer, pointer :: index_avgZonalSSHGradient, index_avgMeridionalSSHGradient
@@ -814,6 +855,8 @@ contains
       domain_ptr => domain
 
       call mpas_pool_get_config(domain_ptr % configs, 'config_restart_timestamp_name', config_restart_timestamp_name)
+      call mpas_pool_get_config(domain_ptr % configs, 'config_sw_absorption_type', config_sw_absorption_type)
+      call mpas_pool_get_config(domain_ptr % configs, 'config_forcing_restart_file', config_forcing_restart_file)
 
       ! Setup log information.
       call shr_file_getLogUnit (shrlogunit)
@@ -930,6 +973,30 @@ contains
          call mpas_stream_mgr_write(domain % streamManager, streamID='output', ierr=ierr)
          call mpas_stream_mgr_reset_alarms(domain % streamManager, streamID='output', ierr=ierr)
 
+         ! read next time level data required for variable shortwave
+         call mpas_timer_start('io_shortwave',.false.)
+         call ocn_get_shortWaveData(domain % streamManager, domain, domain % clock, .false.)
+         call mpas_timer_stop('io_shortwave')
+
+         ! read next time level data required for ecosys forcing
+         call mpas_pool_get_config(domain % configs, 'config_use_ecosysTracers', config_use_ecosysTracers)
+         if (config_use_ecosysTracers) then
+           call mpas_timer_start('io_ecosys',.false.)
+           call ocn_get_ecosysData(domain % streamManager, domain, domain % clock, .false.)
+           call mpas_timer_stop('io_ecosys')
+         endif
+
+         ! read next time level data required for monthly surface salinity restoring
+         call mpas_pool_get_config(domain % configs, 'config_use_activeTracers_surface_restoring',  &
+                                                      config_use_activeTracers_surface_restoring)
+         call mpas_pool_get_config(domain % configs, 'config_use_surface_salinity_monthly_restoring',  &
+                                                      config_use_surface_salinity_monthly_restoring)
+         if (config_use_activeTracers_surface_restoring .and. config_use_surface_salinity_monthly_restoring) then
+           call mpas_timer_start('io_monthly_surface_salinity',.false.)
+           call ocn_get_surfaceSalinityData(domain % streamManager, domain, domain % clock, .false.)
+           call mpas_timer_stop('io_monthly_surface_salinity')
+         endif
+
          call mpas_stream_mgr_write(domain % streamManager, ierr=ierr)
          call mpas_stream_mgr_reset_alarms(domain % streamManager, direction=MPAS_STREAM_OUTPUT, ierr=ierr)
          if (iam==0.and.debugOn) then
@@ -987,8 +1054,20 @@ contains
             open(22, file=config_restart_timestamp_name, form='formatted', status='replace')
             write(22, *) trim(timeStamp)
             close(22)
+
+!maltrud bug
+            open(22, file=config_forcing_restart_file, form='formatted', status='replace')
+            close(22)
          end if
          if (iam==0.and.debugOn) write(stderrUnit,*) 'Finished writing restart streams'
+
+         if(trim(config_sw_absorption_type)=='ohlmann00') call ocn_shortwave_forcing_write_restart(domain_ptr)
+
+         if (config_use_ecosysTracers) call ocn_ecosys_forcing_write_restart(domain_ptr)
+
+         if (config_use_activeTracers_surface_restoring .and. config_use_surface_salinity_monthly_restoring)  &
+            call ocn_salinity_restoring_forcing_write_restart(domain_ptr)
+
       end if
 
       ! Export state to coupler
