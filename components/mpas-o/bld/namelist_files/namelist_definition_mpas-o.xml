@@ -5220,6 +5220,46 @@ Valid values: .true. or .false.
 Default: Defined in namelist_defaults.xml
 </entry>
 
+<entry id="config_ecosysTracers_diagnostic_fields_level1" type="logical"
+        category="tracer_forcing_ecosysTracers" group="tracer_forcing_ecosysTracers">
+if true, make variables in ecosysDiagFieldsLevel1 available for output
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_ecosysTracers_diagnostic_fields_level2" type="logical"
+        category="tracer_forcing_ecosysTracers" group="tracer_forcing_ecosysTracers">
+if true, make variables in ecosysDiagFieldsLevel2 available for output
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_ecosysTracers_diagnostic_fields_level3" type="logical"
+        category="tracer_forcing_ecosysTracers" group="tracer_forcing_ecosysTracers">
+if true, make variables in ecosysDiagFieldsLevel3 available for output
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_ecosysTracers_diagnostic_fields_level4" type="logical"
+        category="tracer_forcing_ecosysTracers" group="tracer_forcing_ecosysTracers">
+if true, make variables in ecosysDiagFieldsLevel4 available for output
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
+<entry id="config_ecosysTracers_diagnostic_fields_level5" type="logical"
+        category="tracer_forcing_ecosysTracers" group="tracer_forcing_ecosysTracers">
+if true, make variables in ecosysDiagFieldsLevel5 available for output
+
+Valid values: .true. or .false.
+Default: Defined in namelist_defaults.xml
+</entry>
+
 
 <!-- tracer_forcing_DMSTracers -->
 
