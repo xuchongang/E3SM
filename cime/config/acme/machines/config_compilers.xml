@@ -758,6 +758,9 @@ for mct, etc.
 <compiler COMPILER="gnu" MACH="anlworkstation">
   <ADD_FFLAGS DEBUG="FALSE"> -O2  </ADD_FFLAGS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2  </ADD_CFLAGS>
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <CONFIG_ARGS> --host=Linux </CONFIG_ARGS>
   <ADD_SLIBS> $(shell $(NETCDF_PATH)/bin/nf-config --flibs) -lblas -llapack</ADD_SLIBS>
   <CXX_LIBS>-lstdc++ -lmpi_cxx</CXX_LIBS>
@@ -939,6 +942,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel" MACH="titan">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2 </ADD_CFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 </ADD_FFLAGS>
   <CONFIG_ARGS> --host=Linux </CONFIG_ARGS>
@@ -955,6 +961,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="pgi" MACH="titan">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2 </ADD_CFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 </ADD_FFLAGS>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
@@ -1042,6 +1051,9 @@ for mct, etc.
   <!-- This LD is a workaround for darshan initialization on mira (Darshan does -->
   <!-- not run if f90 or higher is used for linking -->
   <LD> mpixlf77_r </LD>
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <NETCDF_PATH>/soft/libraries/netcdf/4.3.3-f4.4.1/cnk-xl/current/</NETCDF_PATH>
   <PNETCDF_PATH>/soft/libraries/pnetcdf/1.6.0/cnk-xl/current/</PNETCDF_PATH>
   <HDF5_PATH>/soft/libraries/hdf5/1.8.14/cnk-xl/current/</HDF5_PATH>
@@ -1090,6 +1102,9 @@ for mct, etc.
   <SCC> mpixlc_r </SCC>
   <MPICC> mpixlc_r </MPICC>
   <LD> mpixlf77_r </LD>
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <NETCDF_PATH>/soft/libraries/netcdf/4.3.3-f4.4.1/cnk-xl/current/</NETCDF_PATH>
   <PNETCDF_PATH>/soft/libraries/pnetcdf/1.6.0/cnk-xl/current/</PNETCDF_PATH>
   <HDF5_PATH>/soft/libraries/hdf5/1.8.14/cnk-xl/current/</HDF5_PATH>
@@ -1121,6 +1136,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="pgi" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="openmpi">/soft/openmpi/1.8.2/pgi-13.9</MPI_PATH>
@@ -1152,6 +1170,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="mvapich">/soft/mvapich2/2.2b_psm/intel-15.0</MPI_PATH>
@@ -1169,6 +1190,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="gnu" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="mvapich">/blues/gpfs/home/software/spack/opt/spack/linux-x86_64/gcc-5.3.0/mvapich2-2.2b-sdh7nhddicl4sh5mgxjyzxtxox3ajqey</MPI_PATH>
@@ -1179,6 +1203,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="nag" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="mpich">/home/robl/soft/mpich-3.1.4-nag-6.0</MPI_PATH>
