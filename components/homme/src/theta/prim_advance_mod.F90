@@ -13,7 +13,7 @@ module prim_advance_mod
     integration, nu, nu_div, nu_p, nu_s, nu_top, prescribed_wind, qsplit, rsplit, test_case,&
     theta_hydrostatic_mode, tstep_type, use_moisture, use_cpstar
   use derivative_mod,     only: derivative_t, divergence_sphere, gradient_sphere, laplace_sphere_wk,&
-    laplace_z, vorticity_sphere, vlaplace_sphere_wk 
+    laplace_z, vorticity_sphere, vlaplace_sphere_wk
   use derivative_mod,     only: subcell_div_fluxes, subcell_dss_fluxes
   use dimensions_mod,     only: max_corner_elem, nelemd, nlev, nlevp, np, qsize
   use edge_mod,           only: edgeDGVunpack, edgevpack, edgevunpack, initEdgeBuffer
@@ -28,7 +28,7 @@ module prim_advance_mod
   use kinds,              only: iulog, real_kind
   use perf_mod,           only: t_adj_detailf, t_barrierf, t_startf, t_stopf ! _EXTERNAL
   use parallel_mod,       only: abortmp, global_shared_buf, global_shared_sum, iam, parallel_t
-  use physical_constants, only: Cp, cp, cpwater_vapor, g, kappa, Rgas, Rwater_vapor, p0 
+  use physical_constants, only: Cp, cp, cpwater_vapor, g, kappa, Rgas, Rwater_vapor, p0
   use physics_mod,        only: virtual_specific_heat, virtual_temperature
   use prim_si_mod,        only: preq_vertadv_upwind, preq_vertadv_v, preq_hydrostatic_v2, preq_omega_ps
   use reduction_mod,      only: parallelmax, reductionbuffer_ordered_1d_t
@@ -40,16 +40,17 @@ module prim_advance_mod
     use prim_derived_type_mod ,only : derived_type, initialize
     use, intrinsic :: iso_c_binding
 #endif
- 
+
   implicit none
   private
   save
   public :: prim_advance_exp, prim_advance_init1, &
-       applyCAMforcing_dynamics, applyCAMforcing, vertical_mesh_init2
+       applyCAMforcing_dynamics, applyCAMforcing, vertical_mesh_init2,compute_andor_apply_rhs
 
 !  type (EdgeBuffer_t) :: edge5
   type (EdgeBuffer_t) :: edge6
   real (kind=real_kind), allocatable :: ur_weights(:)
+  real (kind=real_kind) :: eta_ave_w
 
 contains
 
@@ -58,7 +59,8 @@ contains
 
 
   subroutine prim_advance_init1(par, elem,integration)
-        
+
+    implicit none
     type (parallel_t) :: par
     type (element_t), intent(inout), target   :: elem(:)
     character(len=*)    , intent(in) :: integration
@@ -100,16 +102,17 @@ contains
 
   end subroutine vertical_mesh_init2
 
-
-
-
   !_____________________________________________________________________
   subroutine prim_advance_exp(elem, deriv, hvcoord, hybrid,dt, tl,  nets, nete, compute_diagnostics)
 
+    use arkode_mod,     only: parameter_list, update_arkode, get_solution_ptr
+    use iso_c_binding
+    implicit none
+
     type (element_t),      intent(inout), target :: elem(:)
-    type (derivative_t),   intent(in)            :: deriv
-    type (hvcoord_t)                             :: hvcoord
-    type (hybrid_t),       intent(in)            :: hybrid
+    type (derivative_t),   intent(in),    target :: deriv
+    type (hvcoord_t),                     target :: hvcoord
+    type (hybrid_t),       intent(in),    target :: hybrid
     real (kind=real_kind), intent(in)            :: dt
     type (TimeLevel_t)   , intent(in)            :: tl
     integer              , intent(in)            :: nets
@@ -123,10 +126,19 @@ contains
     real (kind=real_kind) :: statesave3(nets:nete,np,np,nlev,6)
 
     real (kind=real_kind) ::  gamma,delta
+    real (kind=real_kind), pointer :: upt(:,:,:),vpt(:,:,:),wpt(:,:,:)
+    real (kind=real_kind), pointer :: phipt(:,:,:),thetapt(:,:,:),dp3dpt(:,:,:)
+
 
     integer :: ie,nm1,n0,np1,nstep,qsplit_stage,k, qn0
     integer :: n,i,j,maxiter
- 
+
+
+    ! ARKode variables
+    type(parameter_list) :: arkode_parameters
+    type(c_ptr) :: ynp1
+    real(real_kind) :: tout, t
+    integer(C_INT) :: ierr, itask
 
     call t_startf('prim_advance_exp')
     nm1   = tl%nm1
@@ -149,13 +161,14 @@ contains
 !                 run with qsplit=1
 !                 (K&G 2nd order method has CFL=4. tiny CFL improvement not worth 2nd order)
 !   tstep_type=6  KG with BW Euler implicit step, usful as a debug
-!   tstep_type=7  ARS232 ARK-IMEX method with 3 explicit stages and 2 implicit stages, 2nd order 
+!   tstep_type=7  ARS232 ARK-IMEX method with 3 explicit stages and 2 implicit stages, 2nd order
 !                 accurate with stage order 1
-!   
+!
+!   tstep_type=10+  ARKode methods
 
 ! default weights for computing mean dynamics fluxes
     eta_ave_w = 1d0/qsplit
- 
+
 #ifndef CAM
     ! if "prescribed wind" set dynamics explicitly and skip time-integration
     if (prescribed_wind ==1 ) then
@@ -165,20 +178,24 @@ contains
     endif
 #endif
 
+  ! Start time stepping
+
+
+
     ! ==================================
     ! Take timestep
     ! ==================================
     dt_vis = dt
-    if (tstep_type==1) then 
-       ! RK2                                                                                                              
-       ! forward euler to u(dt/2) = u(0) + (dt/2) RHS(0)  (store in u(np1))                                               
-       call t_startf("RK2_timestep")                                                                                      
-       call compute_andor_apply_rhs(np1,n0,n0,qn0,dt/2,elem,hvcoord,hybrid,&                                              
-            deriv,nets,nete,compute_diagnostics,0d0,1.d0,1.d0,1.d0)                                                      
-       ! leapfrog:  u(dt) = u(0) + dt RHS(dt/2)     (store in u(np1))                                                     
-       call compute_andor_apply_rhs(np1,n0,np1,qn0,dt,elem,hvcoord,hybrid,&                                               
-            deriv,nets,nete,.false.,eta_ave_w,1.d0,1.d0,1.d0)                                                             
-       call t_stopf("RK2_timestep")   
+    if (tstep_type==1) then
+       ! RK2
+       ! forward euler to u(dt/2) = u(0) + (dt/2) RHS(0)  (store in u(np1))
+       call t_startf("RK2_timestep")
+       call compute_andor_apply_rhs(np1,n0,n0,qn0,dt/2,elem,hvcoord,hybrid,&
+            deriv,nets,nete,compute_diagnostics,0d0,1.d0,1.d0,1.d0)
+       ! leapfrog:  u(dt) = u(0) + dt RHS(dt/2)     (store in u(np1))
+       call compute_andor_apply_rhs(np1,n0,np1,qn0,dt,elem,hvcoord,hybrid,&
+            deriv,nets,nete,.false.,eta_ave_w,1.d0,1.d0,1.d0)
+       call t_stopf("RK2_timestep")
     else if (tstep_type==5) then
        ! Ullrich 3nd order 5 stage:   CFL=sqrt( 4^2 -1) = 3.87
        ! u1 = u0 + dt/5 RHS(u0)  (save u1 in timelevel nm1)
@@ -212,7 +229,7 @@ contains
             deriv,nets,nete,.false.,3*eta_ave_w/4,1.d0,1.d0,1.d0)
        ! final method is the same as:
        ! u5 = u0 +  dt/4 RHS(u0)) + 3dt/4 RHS(u4)
-       call t_stopf("U3-5stage_timestep")  
+       call t_stopf("U3-5stage_timestep")
  ! ==============================================================================
     else if (tstep_type==6) then ! Imex hevi, implicit euler after the full explicit time-step
     ! it seems to run with ne=16, nlev=26, dt=200 for JW Baro up to 18.8 days at least
@@ -246,7 +263,7 @@ contains
        ! u5 = (5*u1/4 - u0/4) + 3dt/4 RHS(u4)
        call compute_andor_apply_rhs(np1,nm1,np1,qn0,3*dt/4,elem,hvcoord,hybrid,&
             deriv,nets,nete,.false.,3*eta_ave_w/4,1.d0,0.d0,1.d0)
- 
+
       maxiter=4
       itertol=1e-8
       call compute_stage_value_dirk(np1,n0,qn0,dt,elem,hvcoord,hybrid,&
@@ -262,14 +279,14 @@ contains
 
       ! save un0 as statesave
       call state_save(elem,statesave,n0,nets,nete)
-                               
+
       ! compute dt*n(un0)=dt*n(g1) and save at np1
       call compute_andor_apply_rhs(np1,n0,n0,qn0,dt,elem,hvcoord,hybrid,&
-        deriv,nets,nete,compute_diagnostics,0.d0,1.d0,0.d0,0.d0)      
+        deriv,nets,nete,compute_diagnostics,0.d0,1.d0,0.d0,0.d0)
 
       ! form un0+dt*gamma*n(g1) and store at n0
       call elemstate_add(elem,statesave,nets,nete,1,n0,np1,n0,gamma,1.d0,0.d0)
-                             
+
       maxiter=10
       itertol=1e-15
       ! solve g2 = un0 + dt*gamma*n(g1)+dt*gamma*s(g2) for g2 and save at nm1
@@ -283,22 +300,22 @@ contains
       call compute_andor_apply_rhs(np1,nm1,nm1,qn0,dt,elem,hvcoord,hybrid,&
         deriv,nets,nete,.false.,(1-gamma)*eta_ave_w,1.d0,0.d0,0.d0)
 
-      ! solve g2 = un0 + dt*gamma*n(g1) + dt*gamma*s(g2) for dt*s(g2) and 
+      ! solve g2 = un0 + dt*gamma*n(g1) + dt*gamma*s(g2) for dt*s(g2) and
       ! store at nm1
       call elemstate_add(elem,statesave,nets,nete,1,nm1,nm1,n0,1.d0/gamma,-1.d0/gamma,0.d0)
 
       ! Form dt*gamma*n(g1) and store at n0
-      call elemstate_add(elem,statesave,nets,nete,2,n0,n0,n0,1.d0,1.d0,-1.d0)                  
+      call elemstate_add(elem,statesave,nets,nete,2,n0,n0,n0,1.d0,1.d0,-1.d0)
 
       ! Form un0+dt*delta*n(g1) and store at n0
-      call elemstate_add(elem,statesave,nets,nete,2,n0,n0,n0,delta/gamma,1.d0,1.d0)                  
+      call elemstate_add(elem,statesave,nets,nete,2,n0,n0,n0,delta/gamma,1.d0,1.d0)
 
       ! Form un0+dt*delta*n(g1)+dt*(1-delta)*n(g2)+dt*(1-gamma)*n(g3)
       call elemstate_add(elem,statesave,nets,nete,4,n0,np1,nm1,1.d0-delta,1.d0-gamma,0.d0)
-      
+
       ! form un0+dt*(1-gamma)*(n(g2)+s(g2)) at nm1
       call elemstate_add(elem,statesave,nets,nete,3,nm1,np1,nm1,1.d0-gamma,1.d0-gamma,1.d0)
-                       
+
       maxiter=10
       itertol=1e-15
       !	solve g3 = (un0+dt*delta*n(g1))+dt*(1-delta)*n(g2)+dt*(1-gamma)*s(g2)+dt*gamma*s(g3)
@@ -312,8 +329,8 @@ contains
        
      ! form unp1 = un0+dt*(1-gamma)*(n(g2)+s(g2))+dt*gamma*(n(g3)+s(g3))
       call compute_andor_apply_rhs(np1,nm1,np1,qn0,gamma*dt,elem,hvcoord,hybrid,&
-        deriv,nets,nete,.false.,gamma*eta_ave_w,1.d0,1.d0,1.d0)     
-            
+        deriv,nets,nete,.false.,gamma*eta_ave_w,1.d0,1.d0,1.d0)
+
       call state_read(elem,statesave,n0,nets,nete)
       call t_stopf("ARS232_timestep")
 !======================================================================================================
@@ -367,7 +384,7 @@ contains
 !===========================================================================================
     elseif (tstep_type==9)  then ! SSP3 332
       call t_startf("SSP3332_timestep")
-       
+
       gamma=1.d0-1.d0/sqrt(2.d0)
       call state_save(elem,statesave0,nm1,nets,nete)
       call state_save(elem,statesave,n0,nets,nete)
@@ -380,7 +397,7 @@ contains
       !   print *, 'num iters  ', maxiter
 
       ! === end of stage 1 ===
-   
+
       ! solve for dt*s(g1) and store at nm1 and statesave3
       call elemstate_add(elem,statesave,nets,nete,1,nm1,np1,n0,1.d0/gamma,-1.d0/gamma,1.d0)
       call state_save(elem,statesave3,nm1,nets,nete)
@@ -408,7 +425,7 @@ contains
       ! compute dt*n(g2) and store at np1
       call compute_andor_apply_rhs(np1,np1,np1,qn0,dt,elem,hvcoord,hybrid,&
         deriv,nets,nete,.false.,eta_ave_w,1.d0,0.d0,0.d0)
-    
+
      ! put xn+dt*0.25*n(g2) at n0
      call elemstate_add(elem,statesave,nets,nete,2,n0,np1,np1,0.25d0,1.d0,1.d0)
 
@@ -821,15 +838,15 @@ contains
         ! d(IE)/dt =  exner * d(Theta)/dt + phi d(dp3d)/dt   (Theta = dp3d*cp*theta)
         !   Our eqation:  d(theta)/dt = diss(theta) + heating
         !   Assuming no diffusion on dp3d, we can approximate by:
-        !   d(IE)/dt = exner*cp*dp3d * diss(theta)  -   exner*cp*dp3d*heating               
+        !   d(IE)/dt = exner*cp*dp3d * diss(theta)  -   exner*cp*dp3d*heating
         !
         ! KE dissipaiton will be given by:
         !   d(KE)/dt = dp3d*U dot diss(U)
         ! we want exner*cp*dp3d*heating = dp3d*U dot diss(U)
         ! and thus heating =  U dot diss(U) / exner*cp
-        ! 
+        !
         ! PE dissipation
-        ! d(PE)/dt = dp3d diss(phi) 
+        ! d(PE)/dt = dp3d diss(phi)
         !     we want dp3d diss(phi) = exner*cp*dp3d*heating
         !     heating = diss(phi) / exner*cp
         !
@@ -842,7 +859,7 @@ contains
 !$omp parallel do default(shared), private(k)
 #endif
         do k=1,nlev
-           
+
            ! p(:,:,k) = (p_i(:,:,k) + elem(ie)%state%dp3d(:,:,k,nt)/2)
            exner(:,:,k)  = ( (p_i(:,:,k) + elem(ie)%state%dp3d(:,:,k,nt)/2) /p0)**kappa
            if (theta_hydrostatic_mode) then
@@ -855,7 +872,7 @@ contains
                    elem(ie)%state%v(:,:,2,k,nt)*vtens(:,:,2,k,ie)  +&
                    elem(ie)%state%w(:,:,k,nt)*stens(:,:,k,3,ie)  +&
                    stens(:,:,k,4,ie) ) / &
-                   (exner(:,:,k)*Cp)  
+                   (exner(:,:,k)*Cp)
            endif
            
            elem(ie)%state%theta_dp_cp(:,:,k,nt)=elem(ie)%state%theta_dp_cp(:,:,k,nt) &
@@ -867,7 +884,7 @@ contains
   enddo
 
 ! convert theta_dp_cp -> theta
-  do ie=nets,nete            
+  do ie=nets,nete
 #if (defined COLUMN_OPENMP)
 !$omp parallel do private(k)
 #endif
@@ -972,7 +989,7 @@ contains
              laplace_sphere_wk(elem(ie)%state%w(:,:,k,nt),deriv,elem(ie),var_coef=.false.) )
 
         stens(:,:,k,4,ie) = (stens(:,:,k,4,ie)*elem(ie)%spheremp(:,:) + &
-             laplace_sphere_wk(elem(ie)%state%phinh(:,:,k,nt),deriv,elem(ie),var_coef=.false.) ) 
+             laplace_sphere_wk(elem(ie)%state%phinh(:,:,k,nt),deriv,elem(ie),var_coef=.false.) )
 
      enddo
 
@@ -980,7 +997,7 @@ contains
      call edgeVpack(edgebuf,vtens(:,:,:,:,ie),2*nlev,kptr,ie)
      kptr=2*nlev
      call edgeVpack(edgebuf,stens(:,:,:,:,ie),4*nlev,kptr,ie)
-     
+
   enddo
 
   call bndry_exchangeV(hybrid,edgebuf)
@@ -1008,7 +1025,7 @@ contains
 
         elem(ie)%state%w(:,:,k,nt)=elem(ie)%state%w(:,:,k,nt) &
              +mu_s*dt*stens(:,:,k,3,ie)*elem(ie)%rspheremp(:,:)
-        
+
         elem(ie)%state%phinh(:,:,k,nt)=elem(ie)%state%phinh(:,:,k,nt) &
              +mu_s*dt*stens(:,:,k,4,ie)*elem(ie)%rspheremp(:,:)
         
@@ -1017,7 +1034,7 @@ contains
 
 
   ! convert theta_dp_cp -> theta
-  do ie=nets,nete            
+  do ie=nets,nete
      do k=1,nlev
         elem(ie)%state%theta_dp_cp(:,:,k,nt)=&
              elem(ie)%state%theta_dp_cp(:,:,k,nt)*Cp*elem(ie)%state%dp3d(:,:,k,nt)
@@ -1071,7 +1088,7 @@ contains
   real (kind=real_kind) :: theta_bar(np,np,nlevp)
   real (kind=real_kind) :: omega_p(np,np,nlev)
   real (kind=real_kind) :: vort(np,np,nlev)           ! vorticity
-  real (kind=real_kind) :: divdp(np,np,nlev)     
+  real (kind=real_kind) :: divdp(np,np,nlev)
   real (kind=real_kind) :: pnh(np,np,nlev)            ! nh (nonydro) pressure
   real (kind=real_kind) :: dpnh(np,np,nlev)
   real (kind=real_kind) :: exner(np,np,nlev)          ! exner nh pressure
@@ -1079,17 +1096,17 @@ contains
   real (kind=real_kind) :: eta_dot_dpdn(np,np,nlevp)  ! vertical velocity at interfaces
   real (kind=real_kind) :: KE(np,np,nlev)             ! Kinetic energy
   real (kind=real_kind) :: gradexner(np,np,2,nlev)    ! grad(p^kappa)
-  real (kind=real_kind) :: gradphi(np,np,2,nlev)     
+  real (kind=real_kind) :: gradphi(np,np,2,nlev)
   real (kind=real_kind) :: gradKE(np,np,2,nlev)       ! grad(0.5 u^T u )
 
   real (kind=real_kind) :: grad_kappastar(np,np,2,nlev)
 
-  real (kind=real_kind) :: v_gradw(np,np,nlev)     
-  real (kind=real_kind) :: v_gradtheta(np,np,nlev)     
+  real (kind=real_kind) :: v_gradw(np,np,nlev)
+  real (kind=real_kind) :: v_gradtheta(np,np,nlev)
   real (kind=real_kind) :: v_theta(np,np,2,nlev)
   real (kind=real_kind) :: div_v_theta(np,np,nlev)
   real (kind=real_kind) :: v_gradphi(np,np,nlev)
-  real (kind=real_kind) :: v_gradKE(np,np,nlev)     
+  real (kind=real_kind) :: v_gradKE(np,np,nlev)
   real (kind=real_kind) :: vdp(np,np,2,nlev)
 
   real (kind=real_kind) :: vtens1(np,np,nlev)
@@ -1126,7 +1143,7 @@ contains
      if (theta_hydrostatic_mode) then
         ! traditional Hydrostatic integral
         do k=1,nlev
-           !temp(:,:,k) = theta_dp_cp(:,:,k)*(exner_i(:,:,k+1)-exner_i(:,:,k))/dp3d(:,:,k)           
+           !temp(:,:,k) = theta_dp_cp(:,:,k)*(exner_i(:,:,k+1)-exner_i(:,:,k))/dp3d(:,:,k)
            temp(:,:,k) = kappa_star(:,:,k)*theta_dp_cp(:,:,k)*exner(:,:,k)/pnh(:,:,k)
         enddo
         !call preq_hydrostatic(phi,elem(ie)%state%phis,T_v,p,dp)
@@ -1190,7 +1207,7 @@ contains
            ! ==================================================
            sdot_sum(:,:) = sdot_sum(:,:) + divdp(:,:,k)
            eta_dot_dpdn(:,:,k+1) = sdot_sum(:,:)
-           
+
         end do
 
 
@@ -1225,7 +1242,7 @@ contains
         !  so we need to compute theta_cp form theta_dp_cp and average to interfaces
         if (theta_hydrostatic_mode) then
            do k=2,nlev   ! energy conserving formula in hydrostatic case:
-              theta_bar(:,:,k) = - (phi(:,:,k)-phi(:,:,k-1))/(exner(:,:,k)-exner(:,:,k-1)) 
+              theta_bar(:,:,k) = - (phi(:,:,k)-phi(:,:,k-1))/(exner(:,:,k)-exner(:,:,k-1))
            enddo
         else
            do k=2,nlev  ! simple averaging
@@ -1275,7 +1292,7 @@ contains
         ! ================================================
         vtemp(:,:,:)   = gradient_sphere(elem(ie)%state%w(:,:,k,n0),deriv,elem(ie)%Dinv)
         v_gradw(:,:,k) = elem(ie)%state%v(:,:,1,k,n0)*vtemp(:,:,1) &
-             +elem(ie)%state%v(:,:,2,k,n0)*vtemp(:,:,2) 
+             +elem(ie)%state%v(:,:,2,k,n0)*vtemp(:,:,2)
         stens(:,:,k,1) = (-s_vadv(:,:,k,1) - v_gradw(:,:,k))*scale1 - scale2*g*(1-dpnh_dp(:,:,k) )
         v_theta(:,:,1,k) = elem(ie)%state%v(:,:,1,k,n0)*               &
           elem(ie)%state%theta_dp_cp(:,:,k,n0)
@@ -1288,14 +1305,13 @@ contains
         gradphi(:,:,:,k) = gradient_sphere(phi(:,:,k),deriv,elem(ie)%Dinv)
 
         v_gradphi(:,:,k) = elem(ie)%state%v(:,:,1,k,n0)*gradphi(:,:,1,k) &
-             +elem(ie)%state%v(:,:,2,k,n0)*gradphi(:,:,2,k) 
+             +elem(ie)%state%v(:,:,2,k,n0)*gradphi(:,:,2,k)
         ! use of s_vadv(:,:,k,2) here is correct since this corresponds to etadot d(phi)/deta
         stens(:,:,k,2) =  (-s_vadv(:,:,k,2) - v_gradphi(:,:,k))*scale1 + scale2*g*elem(ie)%state%w(:,:,k,n0)
 
         KE(:,:,k) = ( elem(ie)%state%v(:,:,1,k,n0)**2 + elem(ie)%state%v(:,:,2,k,n0)**2)/2
         gradKE(:,:,:,k) = gradient_sphere(KE(:,:,k),deriv,elem(ie)%Dinv)
         gradexner(:,:,:,k) = gradient_sphere(exner(:,:,k),deriv,elem(ie)%Dinv)
-
         grad_kappastar(:,:,:,k) = gradient_sphere(kappa_star(:,:,k),deriv,elem(ie)%Dinv)
 
         do j=1,np
@@ -1320,10 +1336,10 @@ contains
                   )*scale1
 
            end do
-        end do     
+        end do
      end do vertloop
 
-     
+
 #ifdef ENERGY_DIAGNOSTICS
      ! =========================================================
      !
@@ -1332,7 +1348,7 @@ contains
      ! uses:  sdot_sum(), eta_dot_dpdn(), grad_ps()
      ! grad_phi(), dp3d(), p(), theta_vadv(), v_vadv(), divdp()
      ! =========================================================
- 
+
      ! =========================================================
      ! (AAM) - This section has accumulations over vertical levels.
      !   Be careful if implementing OpenMP
@@ -1366,19 +1382,19 @@ contains
 #endif
         do k =1,nlev
           do j=1,np
-            do i=1,np                
+            do i=1,np
                   d_eta_dot_dpdn_dn=(eta_dot_dpdn(i,j,k+1)-eta_dot_dpdn(i,j,k))
                !  Form horiz advection of KE-u
                   elem(ie)%accum%KEu_horiz1(i,j)=elem(ie)%accum%KEu_horiz1(i,j)              &
-                  -v_gradKE(i,j,k)*dp3d(i,j,k) 
+                  -v_gradKE(i,j,k)*dp3d(i,j,k)
                   elem(ie)%accum%KEu_horiz2(i,j)=elem(ie)%accum%KEu_horiz2(i,j)              &
                   -KE(i,j,k)*divdp(i,j,k)
                !  Form horiz advection of KE-w
                   elem(ie)%accum%KEw_horiz1(i,j)=elem(ie)%accum%KEw_horiz1(i,j)-   &
-                  dp3d(i,j,k) * elem(ie)%state%w(i,j,k,n0) * v_gradw(i,j,k)    
+                  dp3d(i,j,k) * elem(ie)%state%w(i,j,k,n0) * v_gradw(i,j,k)
                   elem(ie)%accum%KEw_horiz2(i,j)=elem(ie)%accum%KEw_horiz2(i,j)-   &
-                  0.5*(elem(ie)%state%w(i,j,k,n0))**2 * divdp(i,j,k) 
-               !  Form vertical advection of KE-u 
+                  0.5*(elem(ie)%state%w(i,j,k,n0))**2 * divdp(i,j,k)
+               !  Form vertical advection of KE-u
                   elem(ie)%accum%KEu_vert1(i,j)=elem(ie)%accum%KEu_vert1(i,j)- &
                   (elem(ie)%state%v(i,j,1,k,n0) * v_vadv(i,j,1,k) +            &
                   elem(ie)%state%v(i,j,2,k,n0) *v_vadv(i,j,2,k))*dp3d(i,j,k)
@@ -1387,25 +1403,25 @@ contains
                        (elem(ie)%state%v(i,j,2,k,n0))**2)*d_eta_dot_dpdn_dn
                !  Form vertical advection of KE-w
                   elem(ie)%accum%KEw_vert1(i,j)=elem(ie)%accum%KEw_vert1(i,j)      &
-                  -s_vadv(i,j,k,1)*elem(ie)%state%w(i,j,k,n0)*dp3d(i,j,k)    
+                  -s_vadv(i,j,k,1)*elem(ie)%state%w(i,j,k,n0)*dp3d(i,j,k)
                   elem(ie)%accum%KEw_vert2(i,j)=elem(ie)%accum%KEw_vert2(i,j)      &
                   -0.5*d_eta_dot_dpdn_dn*(elem(ie)%state%w(i,j,k,n0)**2)
 
                !  Form IEvert1
                   elem(ie)%accum%IEvert1(i,j)=elem(ie)%accum%IEvert1(i,j)      &
-                  -exner(i,j,k)*s_vadv(i,j,k,3)                        
+                  -exner(i,j,k)*s_vadv(i,j,k,3)
                !  Form IEvert2
                   elem(ie)%accum%IEvert2(i,j)=elem(ie)%accum%IEvert2(i,j)      &
                   +dpnh(i,j,k)*s_vadv(i,j,k,2)
                !  Form PEhoriz1
                   elem(ie)%accum%PEhoriz1(i,j)=(elem(ie)%accum%PEhoriz1(i,j))  &
-                  -phi(i,j,k)*divdp(i,j,k) 
+                  -phi(i,j,k)*divdp(i,j,k)
                !  Form PEhoriz2                                                &
                   elem(ie)%accum%PEhoriz2(i,j)=elem(ie)%accum%PEhoriz2(i,j)    &
-                  -dp3d(i,j,k)*v_gradphi(i,j,k)      
+                  -dp3d(i,j,k)*v_gradphi(i,j,k)
                !  Form PEvert1
                   elem(ie)%accum%PEvert1(i,j) = (elem(ie)%accum%PEvert1(i,j))   &
-                  -phi(i,j,k)*d_eta_dot_dpdn_dn                                 
+                  -phi(i,j,k)*d_eta_dot_dpdn_dn
                !  Form PEvert2
                   elem(ie)%accum%PEvert2(i,j) = elem(ie)%accum%PEvert2(i,j)     &
                   -dp3d(i,j,k)*s_vadv(i,j,k,2)
@@ -1413,14 +1429,14 @@ contains
                   elem(ie)%accum%T01(i,j)=elem(ie)%accum%T01(i,j)               &
                   -(elem(ie)%state%theta_dp_cp(i,j,k,n0))                       &
                   *(gradexner(i,j,1,k)*elem(ie)%state%v(i,j,1,k,n0) +           &
-                  gradexner(i,j,2,k)*elem(ie)%state%v(i,j,2,k,n0))              
-               !  Form S1 
+                  gradexner(i,j,2,k)*elem(ie)%state%v(i,j,2,k,n0))
+               !  Form S1
                   elem(ie)%accum%S1(i,j)=elem(ie)%accum%S1(i,j)                 &
                   -exner(i,j,k)*div_v_theta(i,j,k)
                !  Form T2  = -S2 (no reason to compute S2?)
-                  elem(ie)%accum%T2(i,j)=elem(ie)%accum%T2(i,j)+                & 
+                  elem(ie)%accum%T2(i,j)=elem(ie)%accum%T2(i,j)+                &
                   (g*elem(ie)%state%w(i,j,k,n0)-v_gradphi(i,j,k))               &
-                  *dpnh(i,j,k)                                 
+                  *dpnh(i,j,k)
                !  Form S2
                   elem(ie)%accum%S2(i,j)=elem(ie)%accum%S2(i,j)                 &
                   +(v_gradphi(i,j,k)-g*elem(ie)%state%w(i,j,k,n0))              &
@@ -1433,7 +1449,7 @@ contains
                   + g * (elem(ie)%state%w(i,j,k,n0)) * dp3d(i,j,k)
               enddo
             enddo
-          enddo 
+          enddo
      endif
    
 #endif
@@ -1449,7 +1465,7 @@ contains
           + dt2*stens(:,:,k,1))
         elem(ie)%state%theta_dp_cp(:,:,k,np1) = elem(ie)%spheremp(:,:)*(scale3 * elem(ie)%state%theta_dp_cp(:,:,k,nm1) &
           + dt2*stens(:,:,k,3))
-        elem(ie)%state%phinh(:,:,k,np1)   = elem(ie)%spheremp(:,:)*(scale3 * elem(ie)%state%phinh(:,:,k,nm1) & 
+        elem(ie)%state%phinh(:,:,k,np1)   = elem(ie)%spheremp(:,:)*(scale3 * elem(ie)%state%phinh(:,:,k,nm1) &
           + dt2*stens(:,:,k,2))
 
         elem(ie)%state%dp3d(:,:,k,np1) = &
@@ -1486,7 +1502,7 @@ contains
      kptr=kptr+nlev
      call edgeVunpack(edge6, elem(ie)%state%v(:,:,:,:,np1), 2*nlev, kptr, ie)
 
-      
+
      ! ====================================================
      ! Scale tendencies by inverse mass matrix
      ! ====================================================
@@ -1507,10 +1523,6 @@ contains
 
   end subroutine compute_andor_apply_rhs
 
-
-
-
- 
 !===========================================================================================================
 !===========================================================================================================
 !===========================================================================================================
@@ -1705,4 +1717,3 @@ contains
 
 
 end module prim_advance_mod
-
