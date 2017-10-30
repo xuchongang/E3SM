@@ -463,7 +463,10 @@ contains
       call state_read(elem,statesave,n0,nets,nete)
 
       call t_stopf("SSP3332_timestep")
+<<<<<<< HEAD
 
+=======
+>>>>>>> d0c7dea21224d590c98eca6a0c46e3a0250b2186
 !=========================================================================================
     else if (tstep_type==10) then ! ARKode RK2
       arkode_parameters%imex = 1 ! explicit
@@ -585,8 +588,11 @@ contains
       arkode_parameters%atol(4) = 1.d5*arkode_parameters%rtol ! assumes phinh ~ 1e5
       arkode_parameters%atol(3) = 1.d8*arkode_parameters%rtol ! assumes theta_dp_cp ~ 1e8
       arkode_parameters%atol(3) = 1.d0*arkode_parameters%rtol ! assumes dp3d ~ 1e0
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> d0c7dea21224d590c98eca6a0c46e3a0250b2186
     else
        call abortmp('ERROR: bad choice of tstep_type')
     endif
