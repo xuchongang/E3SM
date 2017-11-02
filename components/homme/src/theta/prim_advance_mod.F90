@@ -105,7 +105,8 @@ contains
   !_____________________________________________________________________
   subroutine prim_advance_exp(elem, deriv, hvcoord, hybrid,dt, tl,  nets, nete, compute_diagnostics)
 
-    use arkode_mod,     only: parameter_list, update_arkode, get_solution_ptr
+    use arkode_mod,     only: parameter_list, update_arkode, get_solution_ptr, &
+                              table_list, set_Butcher_tables
     use iso_c_binding
     implicit none
 
@@ -136,6 +137,7 @@ contains
 
     ! ARKode variables
     type(parameter_list) :: arkode_parameters
+    type(table_list) :: arkode_tables
     type(c_ptr) :: ynp1
     real(real_kind) :: tout, t
     integer(C_INT) :: ierr, itask
@@ -463,142 +465,61 @@ contains
       call state_read(elem,statesave,n0,nets,nete)
 
       call t_stopf("SSP3332_timestep")
-<<<<<<< HEAD
-
-=======
->>>>>>> d0c7dea21224d590c98eca6a0c46e3a0250b2186
 !=========================================================================================
     else if (tstep_type==10) then ! ARKode RK2
-      arkode_parameters%imex = 1 ! explicit
-      arkode_parameters%s = 2 ! 2 stage
-      arkode_parameters%q = 2 ! 2nd order
-      arkode_parameters%p = 0 ! no embedded order
-      arkode_parameters%be2 = 0.d0 ! no embedded explicit method
-      ! Explicit Butcher Table (matrix)
-      arkode_parameters%Ae(1,1:2) = (/  0.d0, 0.d0 /)
-      arkode_parameters%Ae(2,1:2) = (/ 0.5d0, 0.d0 /)
-      ! Explicit Butcher Table (vectors)
-      arkode_parameters%ce(1:2) = (/ 0.d0, 0.5d0 /)
-      arkode_parameters%be(1:2) = (/ 0.d0, 1.d0 /)
+      call set_Butcher_tables(arkode_parameters, arkode_tables%RK2)
 
     else if (tstep_type==11) then ! ARKode Ullrich 3rd-order, 5-stage
-      arkode_parameters%imex = 1 ! explicit
-      arkode_parameters%s = 5 ! 5 stage
-      arkode_parameters%q = 3 ! 3rd order
-      arkode_parameters%p = 0 ! no embedded order
-      arkode_parameters%be2 = 0.d0 ! no embedded explicit method
-      ! Explicit Butcher Table (matrix)
-      arkode_parameters%Ae(1,1:5) = (/  0.d0,  0.d0,      0.d0,      0.d0, 0.d0 /)
-      arkode_parameters%Ae(2,1:5) = (/ 0.2d0,  0.d0,      0.d0,      0.d0, 0.d0 /)
-      arkode_parameters%Ae(3,1:5) = (/  0.d0, 0.2d0,      0.d0,      0.d0, 0.d0 /)
-      arkode_parameters%Ae(4,1:5) = (/  0.d0,  0.d0, 1.d0/3.d0,      0.d0, 0.d0 /)
-      arkode_parameters%Ae(5,1:5) = (/  0.d0,  0.d0,      0.d0, 2.d0/3.d0, 0.d0 /)
-      ! Explicit Butcher Table (vectors)
-      arkode_parameters%ce(1:5) = (/ 0.d0, 0.2d0, 0.2d0, 1.d0/3.d0, 2.d0/3.d0 /)
-      arkode_parameters%be(1:5) = (/ 0.25d0, 0.d0, 0.d0, 0.d0, 0.75d0 /)
+      call set_Butcher_tables(arkode_parameters, arkode_tables%U35)
 
-    else if (tstep_type==12) then ! ARKode ARS232
-      arkode_parameters%imex = 2 ! imex
-      arkode_parameters%s = 3 ! 3 stage
-      arkode_parameters%q = 2 ! 2nd order
-      arkode_parameters%p = 0 ! no embedded order
-      arkode_parameters%be2 = 0.d0 ! no embedded explicit method
-      delta = -2.d0*sqrt(2.d0)/3.d0
-      gamma = 1.d0 - 1.d0/sqrt(2.d0)
-      ! Implicit Butcher Table (matrix)
-      arkode_parameters%Ai(1,1:3) = (/ 0.d0,       0.d0,  0.d0 /)
-      arkode_parameters%Ai(2,1:3) = (/ 0.d0,      gamma,  0.d0 /)
-      arkode_parameters%Ai(3,1:3) = (/ 0.d0, 1.d0-gamma, gamma /)
-      ! Implicit Butcher Table (vectors)
-      arkode_parameters%ci(1:3) = (/ 0.d0, gamma, 1.d0 /)
-      arkode_parameters%bi(1:3) = (/ 0.d0, 1.d0-gamma, gamma /)
-      ! Explicit Butcher Table (matrix)
-      arkode_parameters%Ae(1,1:3) = (/  0.d0,       0.d0, 0.d0 /)
-      arkode_parameters%Ae(2,1:3) = (/ gamma,       0.d0, 0.d0 /)
-      arkode_parameters%Ae(3,1:3) = (/ delta, 1.d0-delta, 0.d0 /)
-      ! Explicit Butcher Table (vectors)
-      arkode_parameters%ce(1:3) = (/ 0.d0, gamma, 1.d0 /)
-      arkode_parameters%be(1:3) = (/ 0.d0, 1.d0-gamma, gamma /)
-      ! GMRES Solver parameters
-      arkode_parameters%precLR = 0 ! no preconditioning
-      arkode_parameters%gstype = 1 ! classical Gram-Schmidt orthogonalization
-      arkode_parameters%lintol = 1.d0 ! arbitrarily set for now
-      ! Iteration tolerances
-      arkode_parameters%rtol = 1.d-1 ! arbitrarily set for now
-      arkode_parameters%iatol = 2 ! use array of absolute tolerance values
-      arkode_parameters%atol(1) = 1.d1*arkode_parameters%rtol ! assumes u ~ 1e1
-      arkode_parameters%atol(2) = 1.d1*arkode_parameters%rtol ! assumes v ~ 1e1
-      arkode_parameters%atol(3) = 1.d1*arkode_parameters%rtol ! assumes w ~ 1e1
-      arkode_parameters%atol(4) = 1.d5*arkode_parameters%rtol ! assumes phinh ~ 1e5
-      arkode_parameters%atol(3) = 1.d8*arkode_parameters%rtol ! assumes theta_dp_cp ~ 1e8
-      arkode_parameters%atol(3) = 1.d0*arkode_parameters%rtol ! assumes dp3d ~ 1e0
+    else if (tstep_type==12) then ! ARKode Ascher 2nd/2nd/2nd-order, 3-stage
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARS232)
 
     else if (tstep_type==13) then ! ARKode Candidate ARK453 Method
-      arkode_parameters%imex = 2 ! imex
-      arkode_parameters%s = 5 ! 5 stage
-      arkode_parameters%q = 3 ! 3rd order
-      arkode_parameters%p = 0 ! no embedded order
-      arkode_parameters%be2 = 0.d0 ! no embedded explicit method
-      ! Implicit Butcher Table (matrix)
-      arkode_parameters%Ai(1,1:5) = (/ 0.d0, 0.d0, 0.d0, 0.d0, 0.d0 /)
-      arkode_parameters%Ai(2,1:5) = (/ -0.22284985318525410d0, 0.32591194130117247d0, &
-                                      0.d0, 0.d0, 0.d0 /)
-      arkode_parameters%Ai(3,1:5) = (/ -0.46801347074080545d0, 0.86349284225716961d0, &
-                                      0.32591194130117247d0, 0.d0, 0.d0 /)
-      arkode_parameters%Ai(4,1:5) = (/ -0.46509906651927421d0, 0.81063103116959553d0, &
-                                      0.61036726756832357d0, 0.32591194130117247d0, &
-                                      0.d0 /)
-      arkode_parameters%Ai(5,1:5) = (/ 0.87795339639076675d0, -0.72692641526151547d0, &
-                                      0.75204137157372720d0, -0.22898029400415088d0, &
-                                      0.32591194130117247d0 /)
-      ! Implicit Butcher Table (vectors)
-      arkode_parameters%ci(1:5) = (/ 0.d0, 0.1030620881159184d0, &
-                                    0.72139131281753662d0, 1.28181117351981733d0, &
-                                    1.d0 /)
-      arkode_parameters%bi(1:5) = (/ 0.87795339639076672d0, -0.72692641526151549d0, &
-                                    0.7520413715737272d0, -0.22898029400415090d0, &
-                                    0.32591194130117246d0 /)
-      ! Explicit Butcher Table (matrix)
-      arkode_parameters%Ae(1,1:5) = (/ 0.d0, 0.d0,  0.d0, 0.d0, 0.d0 /)
-      arkode_parameters%Ae(2,1:5) = (/ 0.10306208811591838d0, 0.d0, 0.d0, 0.d0, 0.d0 /)
-      arkode_parameters%Ae(3,1:5) = (/ -0.94124866143519894d0, 1.6626399742527356d0, &
-                                      0.d0, 0.d0, 0.d0 /)
-      arkode_parameters%Ae(4,1:5) = (/ -1.3670975201437765d0, 1.3815852911016873d0, &
-                                      1.2673234025619065d0, 0.d0, 0.d0 /)
-      arkode_parameters%Ae(5,1:5) = (/ -0.81287582068772448d0, 0.81223739060505738d0, &
-                                      0.90644429603699305d0, 0.094194134045674111d0, &
-                                      0.d0 /)
-      ! Explicit Butcher Table (vectors)
-      arkode_parameters%ce(1:5) = (/ 0.d0, 0.1030620881159184d0, &
-                                    0.72139131281753662d0, 1.28181117351981733d0, &
-                                    1.d0 /)
-      arkode_parameters%be(1:5) = (/ 0.87795339639076672d0, -0.72692641526151549d0, &
-                                    0.7520413715737272d0, -0.22898029400415090d0, &
-                                    0.32591194130117246d0 /)
-      ! GMRES Solver parameters
-      arkode_parameters%precLR = 0 ! no preconditioning
-      arkode_parameters%gstype = 1 ! classical Gram-Schmidt orthogonalization
-      arkode_parameters%lintol = 1.d0 ! arbitrarily set for now
-      ! Iteration tolerances
-      arkode_parameters%rtol = 1.d-1 ! arbitrarily set for now
-      arkode_parameters%iatol = 2 ! use array of absolute tolerance values
-      arkode_parameters%atol(1) = 1.d1*arkode_parameters%rtol ! assumes u ~ 1e1
-      arkode_parameters%atol(2) = 1.d1*arkode_parameters%rtol ! assumes v ~ 1e1
-      arkode_parameters%atol(3) = 1.d1*arkode_parameters%rtol ! assumes w ~ 1e1
-      arkode_parameters%atol(4) = 1.d5*arkode_parameters%rtol ! assumes phinh ~ 1e5
-      arkode_parameters%atol(3) = 1.d8*arkode_parameters%rtol ! assumes theta_dp_cp ~ 1e8
-      arkode_parameters%atol(3) = 1.d0*arkode_parameters%rtol ! assumes dp3d ~ 1e0
-<<<<<<< HEAD
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARK453)
+
+    else if (tstep_type==14) then ! ARKode Ascher 2nd/2nd/2nd-order, 3-stage
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARS222)
+
+    else if (tstep_type==15) then ! ARKode Ascher 3rd/4th/3rd-order, 3-stage
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARS233)
+
+    else if (tstep_type==16) then ! ARKode Ascher 3rd/3rd/3rd-order, 4-stage
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARS343)
+
+    else if (tstep_type==17) then ! ARKode Ascher 3rd/3rd/3rd-order, 5-stage
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARS443)
+
+    else if (tstep_type==18) then ! ARKode Kennedy 3rd/3rd/3rd-order, 4-stage
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARK324)
+
+    else if (tstep_type==19) then ! ARKode Kennedy 4th/4th/4th-order, 6-stage
+      call set_Butcher_tables(arkode_parameters, arkode_tables%ARK436)
 
 
-=======
->>>>>>> d0c7dea21224d590c98eca6a0c46e3a0250b2186
     else
        call abortmp('ERROR: bad choice of tstep_type')
     endif
 
-
+    ! Use ARKode to advance solution
     if (tstep_type >= 10) then
+
+      ! If implicit solves are involved, set corresponding parameters
+      if (arkode_parameters%imex /= 1) then
+        ! linear solver parameters
+        arkode_parameters%useColumnSolver = .false. ! use GMRES (optimally, this could be changed at runtime)
+        arkode_parameters%precLR = 0 ! no preconditioning
+        arkode_parameters%gstype = 1 ! classical Gram-Schmidt orthogonalization
+        arkode_parameters%lintol = 0.05d0 ! multiplies NLCOV_COEF in linear conv. criteria
+        ! Iteration tolerances (appear in WRMS array as rtol*|u_i| + atol_i)
+        arkode_parameters%rtol = 1.d-8
+        arkode_parameters%atol(1) = 1.d1*arkode_parameters%rtol ! assumes u ~ 1e1
+        arkode_parameters%atol(2) = 1.d1*arkode_parameters%rtol ! assumes v ~ 1e1
+        arkode_parameters%atol(3) = 1.d1*arkode_parameters%rtol ! assumes w ~ 1e1
+        arkode_parameters%atol(4) = 1.d5*arkode_parameters%rtol ! assumes phinh ~ 1e5
+        arkode_parameters%atol(5) = 1.d8*arkode_parameters%rtol ! assumes theta_dp_cp ~ 1e8
+        arkode_parameters%atol(6) = 1.d0*arkode_parameters%rtol ! assumes dp3d ~ 1e0
+      end if
 
       ! update ARKode solver
       call update_arkode(elem, nets, nete, deriv, hvcoord, hybrid, &
@@ -973,9 +894,12 @@ contains
 
            elem(ie)%state%w(:,:,k,nt)=elem(ie)%state%w(:,:,k,nt) &
                 +stens(:,:,k,3,ie)
+
            elem(ie)%state%phinh(:,:,k,nt)=elem(ie)%state%phinh(:,:,k,nt) &
                 +stens(:,:,k,4,ie)
         enddo
+
+
         ! apply heating after updating sate.  using updated v gives better results in PREQX model
         !
         ! d(IE)/dt =  exner * d(Theta)/dt + phi d(dp3d)/dt   (Theta = dp3d*cp*theta)
@@ -1009,6 +933,7 @@ contains
               heating(:,:,k)= (elem(ie)%state%v(:,:,1,k,nt)*vtens(:,:,1,k,ie) + &
                    elem(ie)%state%v(:,:,2,k,nt)*vtens(:,:,2,k,ie) ) / &
                    (exner(:,:,k)*Cp)
+
            else
               heating(:,:,k)= (elem(ie)%state%v(:,:,1,k,nt)*vtens(:,:,1,k,ie) + &
                    elem(ie)%state%v(:,:,2,k,nt)*vtens(:,:,2,k,ie)  +&
@@ -1272,7 +1197,7 @@ contains
   real (kind=real_kind), dimension(np,np,2,nlev) :: grad_p
 
   call t_startf('compute_andor_apply_rhs')
-  
+
   if (present(scale4)) then
     sdotscale = 1.d0
   else
