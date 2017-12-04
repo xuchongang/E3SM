@@ -1215,6 +1215,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel" MACH="anvil">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_SLIBS>$(shell $(NETCDF_PATH)/bin/nf-config --flibs) -llapack -lblas -mkl </ADD_SLIBS>
   <ADD_SLIBS> -Wl,-rpath -Wl,$(NETCDF_PATH)/lib </ADD_SLIBS>
   <GPTL_CPPDEFS> -DHAVE_SLASHPROC </GPTL_CPPDEFS>
@@ -1222,12 +1225,21 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="gnu" MACH="anvil">
+  <ADD_CFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_CFLAGS>
+  <ADD_FFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_FFLAGS>
+  <ADD_LDFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_LDFLAGS>
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_SLIBS>$(shell $(NETCDF_PATH)/bin/nf-config --flibs) -llapack -lblas</ADD_SLIBS>
   <GPTL_CPPDEFS> -DHAVE_NANOTIME -DBIT64 -DHAVE_SLASHPROC -DHAVE_GETTIMEOFDAY</GPTL_CPPDEFS>
   <PIO_FILESYSTEM_HINTS>gpfs </PIO_FILESYSTEM_HINTS>
 </compiler>
 
 <compiler COMPILER="pgi" MACH="anvil">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_SLIBS>$(shell $(NETCDF_PATH)/bin/nf-config --flibs) -llapack -lblas</ADD_SLIBS>
   <ADD_SLIBS> -rpath $(NETCDF_PATH)/lib </ADD_SLIBS>
   <PIO_FILESYSTEM_HINTS>gpfs </PIO_FILESYSTEM_HINTS>
