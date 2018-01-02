@@ -1,16 +1,16 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
-!#define ARK232_ARK 1
-#define ARK324_ARK 2
-#define ARK436_ARK 3
-#define ARK453_ARK 4
-!#define ARK548_ARK 5
-#define ARS222_ARK 6
-#define ARS232_ARK 7
-#define ARS233_ARK 8
-#define ARS343_ARK 9
-#define ARS443_ARK 10
+#define ARK324_ARK 1
+#define ARK436_ARK 2
+#define ARK453_ARK 3
+#define ARS222_ARK 4
+#define ARS232_ARK 5
+#define ARS233_ARK 6
+#define ARS343_ARK 7
+#define ARS443_ARK 8
+#define SSP3333B_ARK 9
+#define SSP3333C_ARK 10
 #define RK2_ARK 11
 #define U35_ARK 12
 
@@ -29,25 +29,32 @@ module arkode_mod
   private
 
   integer, parameter :: max_stage_num = 10
-  integer, parameter :: freelevels = timelevels-30
-  ! Note that 30 is an estimate, but needs to be at least > 25
+  integer, parameter :: freelevels = timelevels-35
+  ! Note that 35 is an estimate, but needs to be at least > 30
   ! If a larger Krylov subspace is desired, timelevels should be
   ! increased.
 
+  ! ARKode namelist variables
+  integer, public         :: imex_splitting = 1
+  real(real_kind), public :: rel_tol = 1.d-8
+  real(real_kind), public :: abs_tol = 1.d-8  ! val < 0 indicates array atol
+  logical, public         :: calc_nonlinear_stats = .true.
+
   ! data type for passing ARKode Butcher table names
   type :: table_list
-    integer :: ARK324 = ARK324_ARK
-    integer :: ARK436 = ARK436_ARK
-    integer :: ARK453 = ARK453_ARK
-    integer :: ARS222 = ARS222_ARK
-    integer :: ARS232 = ARS232_ARK
-    integer :: ARS233 = ARS233_ARK
-    integer :: ARS343 = ARS343_ARK
-    integer :: ARS443 = ARS443_ARK
-    integer :: RK2    = RK2_ARK
-    integer :: U35    = U35_ARK
+    integer :: ARK324   = ARK324_ARK
+    integer :: ARK436   = ARK436_ARK
+    integer :: ARK453   = ARK453_ARK
+    integer :: ARS222   = ARS222_ARK
+    integer :: ARS232   = ARS232_ARK
+    integer :: ARS233   = ARS233_ARK
+    integer :: ARS343   = ARS343_ARK
+    integer :: ARS443   = ARS443_ARK
+    integer :: SSP3333B = SSP3333B_ARK
+    integer :: SSP3333C = SSP3333C_ARK
+    integer :: RK2      = RK2_ARK
+    integer :: U35      = U35_ARK
   end type table_list
-
 
   ! data type for passing ARKode parameters
   type :: parameter_list
@@ -77,8 +84,10 @@ module arkode_mod
     real(real_kind) :: atol(6) ! absolute tolerances (u,v,w,phinh,theta_dp_cp,dp3d)
   end type parameter_list
 
-  public :: parameter_list, update_arkode, get_solution_ptr, get_RHS_vars
-  public :: max_stage_num, table_list, set_Butcher_tables, get_EWT_vars
+  public :: parameter_list, update_arkode, get_solution_ptr, get_hvcoord_ptr
+  public :: get_qn0, get_RHS_vars
+  public :: max_stage_num, table_list, set_Butcher_tables
+  public :: update_nonlinear_stats, finalize_nonlinear_stats
 
   save
 
@@ -88,12 +97,87 @@ module arkode_mod
   type(parameter_list), pointer :: param_ptr
   type(NVec_t), target          :: y_F(3), atol_F
   type(c_ptr)                   :: y_C(3), atol_C
-  real(real_kind)               :: dt_save, eta_ave_w_save, rtol_save
+  real(real_kind)               :: dt_save, eta_ave_w_save, rout(40)
   integer                       :: imex_save, qn0_save
-
-  logical :: initialized = .false.
+  logical                       :: initialized = .false.
+  integer(C_LONG)               :: iout(40)
+  ! variables used for nonlinear solver stats, not necessary for use of ARKode
+  integer :: total_nonlinear_iterations = 0
+  integer :: max_nonlinear_iterations = 0
+  integer :: num_timesteps = 0
 
 contains
+
+  subroutine update_nonlinear_stats(timesteps, nonlinear_iters)
+    !-----------------------------------------------------------------
+    ! Description: update ARKode performance statistics
+    !   Arguments:
+    !          timesteps - (int, input, optional) specify # of timesteps
+    !    nonlinear_iters - (int, input, optional) specify # of nonlinear iters
+    !-----------------------------------------------------------------
+
+    !======= Declarations =========
+    implicit none
+
+    ! calling variables
+    integer, intent(in), optional :: timesteps
+    integer, intent(in), optional :: nonlinear_iters
+
+    !======= Internals ============
+    if (present(timesteps)) then
+      num_timesteps = num_timesteps + timesteps
+    else
+      num_timesteps = num_timesteps + 1
+    end if
+    if (present(nonlinear_iters)) then
+      max_nonlinear_iterations = max(max_nonlinear_iterations, nonlinear_iters)
+      total_nonlinear_iterations = total_nonlinear_iterations + nonlinear_iters
+    else
+      max_nonlinear_iterations = max(max_nonlinear_iterations, iout(11))
+      total_nonlinear_iterations = total_nonlinear_iterations + iout(11)
+    end if
+    return
+  end subroutine update_nonlinear_stats
+
+  !=================================================================
+
+  subroutine finalize_nonlinear_stats(comm, my_rank, master_rank, comm_size)
+    !-----------------------------------------------------------------
+    ! Description: print ARKode performance statistics
+    !-----------------------------------------------------------------
+
+    !======= Inclusions ===========
+    use mpi
+
+    !======= Declarations =========
+    implicit none
+
+    ! calling variables
+    integer, intent(in) :: comm
+    integer, intent(in) :: my_rank
+    integer, intent(in) :: master_rank
+    integer, intent(in) :: comm_size
+
+    ! local variables
+    integer :: max_result, sum_result, ierr
+
+    !======= Internals ============
+    call MPI_Reduce(max_nonlinear_iterations, max_result, 1, MPI_INTEGER, &
+                    MPI_MAX, master_rank, comm, ierr)
+    call MPI_Reduce(total_nonlinear_iterations, sum_result, 1, MPI_INTEGER, &
+                    MPI_SUM, master_rank, comm, ierr)
+    if (my_rank == master_rank) then
+      print *, 'Nonlinear Solver Statistics:'
+      print '(2x,A,i9)','Max num nonlin iters   =', max_result
+      print '(2x,A,i9)','Total num nonlin iters =', sum_result
+      print '(2x,A,i9)','Total num timesteps    =', num_timesteps
+      print '(2x,A,f9.2)','Avg num nonlin iters   =', sum_result/float(comm_size*num_timesteps)
+    end if
+
+    return
+  end subroutine finalize_nonlinear_stats
+
+  !=================================================================
 
   subroutine get_solution_ptr(np1, ynp1)
     !-----------------------------------------------------------------
@@ -121,11 +205,58 @@ contains
 
   !=================================================================
 
-  subroutine get_RHS_vars(imex, qn0, dt, eta_ave_w, hvcoord, hybrid, deriv)
+  subroutine get_hvcoord_ptr(hvcoord)
+    !-----------------------------------------------------------------
+    ! Description: sets pointer to current hvcoord object
+    !   Arguments:
+    !     hvcoord - (obj*, output) hvcoord object pointer
+    !-----------------------------------------------------------------
+
+    !======= Inclusions ===========
+    use hybvcoord_mod,  only: hvcoord_t
+
+    !======= Declarations =========
+    implicit none
+
+    ! calling variables
+    type(hvcoord_t),    intent(out) :: hvcoord
+
+    !======= Internals ============
+    hvcoord = hvcoord_ptr
+
+    return
+  end subroutine get_hvcoord_ptr
+
+  !=================================================================
+
+  subroutine get_qn0(qn0)
+    !-----------------------------------------------------------------
+    ! Description: obtains current qn0 value
+    !   Arguments:
+    !     qn0 - (int, output) qn0 value
+    !-----------------------------------------------------------------
+
+    !======= Declarations =========
+    implicit none
+
+    ! calling variables
+    integer, intent(out) :: qn0
+
+    !======= Internals ============
+    qn0 = qn0_save
+
+    return
+  end subroutine get_qn0
+
+  !=================================================================
+
+  subroutine get_RHS_vars(imex, dt, eta_ave_w, hybrid, deriv)
     !-----------------------------------------------------------------
     ! Description: sets variables and objects needed to compute RHS
     !   Arguments:
-    !     hvcoord - (obj*, output) hvcoord object pointer
+    !        imex - (int, output) variable for imex specification
+    !          dt - (real, output) variable for timestep size
+    !   eta_ave_w - (real, output) variable for eta_ave_w value
     !      hybrid - (obj*, output) hybrid object pointer
     !       deriv - (obj*, output) deriv object pointer
     !-----------------------------------------------------------------
@@ -133,25 +264,21 @@ contains
     !======= Inclusions ===========
     use derivative_mod, only: derivative_t
     use hybrid_mod,     only: hybrid_t
-    use hybvcoord_mod,  only: hvcoord_t
     use kinds,          only: real_kind
 
     !======= Declarations =========
     implicit none
 
     ! calling variables
-    type(hvcoord_t),    intent(out) :: hvcoord
     type(hybrid_t),     intent(out) :: hybrid
     type(derivative_t), intent(out) :: deriv
-    integer,            intent(out) :: imex, qn0
+    integer,            intent(out) :: imex
     real(real_kind),    intent(out) :: dt, eta_ave_w
 
     !======= Internals ============
     imex = imex_save
-    qn0 = qn0_save
     dt = dt_save
     eta_ave_w = eta_ave_w_save
-    hvcoord = hvcoord_ptr
     hybrid = hybrid_ptr
     deriv = deriv_ptr
 
@@ -159,36 +286,6 @@ contains
   end subroutine get_RHS_vars
 
   !=================================================================
-
-  subroutine get_EWT_vars(atol, rtol)
-    !-----------------------------------------------------------------
-    ! Description: sets variables and objects needed to compute RHS
-    !   Arguments:
-    !    atol - (obj*, output) NVector that contains atol array
-    !    rtol - (real, output) rtol value
-    !-----------------------------------------------------------------
-
-    !======= Inclusions ===========
-    use HommeNVector, only: NVec_t
-    use kinds,        only: real_kind
-
-    !======= Declarations =========
-    implicit none
-
-    ! calling variables
-    type(NVec_t),    intent(out) :: atol
-    real(real_kind), intent(out) :: rtol
-
-    !======= Internals ============
-    atol = atol_F
-    rtol = rtol_save
-
-    return
-  end subroutine get_EWT_vars
-
-
-    !=================================================================
-
 
   subroutine update_arkode(elem, nets, nete, deriv, hvcoord, hybrid, &
                            dt, eta_ave_w, n0, qn0, arkode_parameters)
@@ -243,11 +340,10 @@ contains
     ! specify start time to be 0.0 so stage time available in farkefun & farkifun
     tstart = 0.d0
 
-    ! store variables for farkefun, farkifun, and farkewt
+    ! store variables for farkefun and farkifun
     dt_save = dt
     eta_ave_w_save = eta_ave_w
     imex_save = arkode_parameters%imex
-    rtol_save = arkode_parameters%rtol
     qn0_save = qn0
     hybrid_ptr => hybrid
     deriv_ptr => deriv
@@ -267,14 +363,6 @@ contains
     if (ierr /= 0) then
       call abortmp('farksetrin failed')
     endif
-
-    ! ! Specify user-defined error weight vector function
-    ! ! (will use current solution)
-    ! iflag = 1
-    ! call farkewtset(iflag, ierr)
-    ! if (ierr /= 0) then
-    !    call abortmp('arkode_init: farkewtset failed')
-    ! end if
 
     return
   end subroutine update_arkode
@@ -312,7 +400,6 @@ contains
     ap => arkode_parameters
 
     ! update rtol and atol
-    rtol_save = ap%rtol
     do ie=atol_F%nets,atol_F%nete
       atol_F%elem(ie)%state%v(:,:,1,:,atol_F%tl_idx) = ap%atol(1)
       atol_F%elem(ie)%state%v(:,:,2,:,atol_F%tl_idx) = ap%atol(2)
@@ -367,11 +454,11 @@ contains
 
     ! local variables
     type(parameter_list), pointer :: ap
-    real(real_kind)               :: rout(40), rpar(1)
+    real(real_kind)               :: rpar(1)
     real(real_kind)               :: A_C1(arkode_parameters%s*arkode_parameters%s)
     real(real_kind)               :: A_C2(arkode_parameters%s*arkode_parameters%s)
     integer(C_INT)                :: idef, iatol, ierr
-    integer(C_LONG)               :: iout(40), ipar(1)
+    integer(C_LONG)               :: ipar(1)
     integer                       :: i, j
 
     !======= Internals ============
@@ -397,7 +484,6 @@ contains
 
     ! save rtol, set data in 4th timelevel to atol values,
     ! and 'create' NVec_t object
-    rtol_save = ap%rtol
     do i=nets,nete
       elem(i)%state%v(:,:,1,:,4) = ap%atol(1)
       elem(i)%state%v(:,:,2,:,4) = ap%atol(2)
@@ -488,40 +574,31 @@ contains
 
 
       if (ap%useColumnSolver) then
-
-        !---- or to instead use the HOMME columnwise direct solver ----!
-!        call FColumnSolInit(ierr)
-!        if (ierr /= 0) then
-!          call abortmp('arkode_init: FColumnSolInit failed')
-!        end if
-        call abortmp('arkode_init: HOMME native solver not implemented yet')
-
-      else
-
-        ! indicate use of GMRES linear solver (and set options)
-        call farkspgmr(ap%precLR, ap%gstype, ap%maxl, ap%lintol, ierr)
+      ! use the HOMME columnwise direct solver
+        call FColumnSolInit(ierr)
         if (ierr /= 0) then
-          call abortmp('arkode_init: farkspgmr failed')
+          call abortmp('arkode_init: FColumnSolInit failed')
         end if
 
-
-
-        ! call FSunSPGMRInit(4, ap%precLR, ap%maxl, ierr)
-        ! if (ierr /= 0) then
-        !   call abortmp('arkode_init: FSunSPGMRInit failed')
-        ! end if
-        ! call FSunSPGMRSetGSType(4, ap%gstype, ierr)
-        ! if (ierr /= 0) then
-        !   call abortmp('arkode_init: FSunSPGMRSetGSType failed')
-        ! end if
-        ! call FARKSpilsInit(ierr)
-        ! if (ierr /= 0) then
-        !   call abortmp('arkode_init: FARKSpilsInit failed')
-        ! end if
-        ! call FARKSpilsSetEpsLin(ap%lintol, ierr)
-        ! if (ierr /= 0) then
-        !   call abortmp('arkode_init: FARKSpilsSetEpsLin failed')
-        ! end if
+      else
+      ! use the GMRES linear solver (and set options)
+        idef = 4 ! flag specifying which SUNDIALS solver will be used (4=ARKode)
+        call FSunSPGMRInit(idef, ap%precLR, ap%maxl, ierr)
+        if (ierr /= 0) then
+          call abortmp('arkode_init: FSunSPGMRInit failed')
+        end if
+        call FSunSPGMRSetGSType(idef, ap%gstype, ierr)
+        if (ierr /= 0) then
+          call abortmp('arkode_init: FSunSPGMRSetGSType failed')
+        end if
+        call FARKSpilsInit(ierr)
+        if (ierr /= 0) then
+          call abortmp('arkode_init: FARKSpilsInit failed')
+        end if
+        call FARKSpilsSetEpsLin(ap%lintol, ierr)
+        if (ierr /= 0) then
+          call abortmp('arkode_init: FARKSpilsSetEpsLin failed')
+        end if
 
         !      Indicate to use our own preconditioner setup/solve routines (otherwise
         !      preconditioning is disabled)
@@ -575,14 +652,14 @@ contains
 
     ! local variables
     type(parameter_list), pointer :: ap
-    real(real_kind) :: delta, gamma, b1, b2
+    real(real_kind) :: beta, gamma, delta, b1, b2
 
     !======= Internals ============
     ap => arkode_parameters
 
     select case (table_name)
 
-    case (RK2_ARK) ! TESTED: compared against HOMME version
+    case (RK2_ARK)
         ap%imex = 1 ! explicit
         ap%s = 2 ! 2 stage
         ap%q = 2 ! 2nd order
@@ -595,7 +672,7 @@ contains
         ap%ce(1:2) = (/ 0.d0, 0.5d0 /)
         ap%be(1:2) = (/ 0.d0, 1.d0 /)
 
-      case (U35_ARK) ! TESTED: compared against HOMME version
+      case (U35_ARK)
         ap%imex = 1 ! explicit
         ap%s = 5 ! 5 stage
         ap%q = 3 ! 3rd order
@@ -772,7 +849,7 @@ contains
         ap%ce(1:5) = ap%ci(1:5)
         ap%be(1:5) = (/ 1.d0/4.d0, 7.d0/4.d0, 3.d0/4.d0, -7.d0/4.d0, 0.d0 /)
 
-      case (ARK324_ARK)
+      case (ARK324_ARK) ! NOT TESTED
         ap%imex = 2 ! imex
         ap%s = 4 ! 4 stage
         ap%q = 3 ! 3rd order
@@ -780,14 +857,14 @@ contains
         ! Implicit Butcher Table (matrix)
         ap%Ai(1:4,1:4) = 0.d0
         ap%Ai(2,1:2) = (/ 1767732205903.d0/4055673282236.d0, &
-                            1767732205903.d0/4055673282236.d0 /)
+                          1767732205903.d0/4055673282236.d0 /)
         ap%Ai(3,1:3) = (/ 2746238789719.d0/10658868560708.d0, &
-                            -640167445237.d0/6845629431997.d0, &
-                            1767732205903.d0/4055673282236.d0 /)
+                         -640167445237.d0/6845629431997.d0, &
+                          1767732205903.d0/4055673282236.d0 /)
         ap%Ai(4,1:4) = (/ 1471266399579.d0/7840856788654.d0, &
-                            -4482444167858.d0/7529755066697.d0, &
-                            11266239266428.d0/11593286722821.d0, &
-                            1767732205903.d0/4055673282236.d0 /)
+                         -4482444167858.d0/7529755066697.d0, &
+                          11266239266428.d0/11593286722821.d0, &
+                          1767732205903.d0/4055673282236.d0 /)
         ! Implicit Butcher Table (vectors)
         ap%ci(1:4) = (/ 0.d0, 1767732205903.d0/2027836641118.d0, 3.d0/5.d0, 1.d0 /)
         ap%bi(1) = 1471266399579.d0/7840856788654.d0
@@ -801,7 +878,7 @@ contains
                           788022342437.d0/10882634858940.d0 /)
         ap%Ae(4,1:3) = (/ 6485989280629.d0/16251701735622.d0, &
                          -4246266847089.d0/9704473918619.d0, &
-                         10755448449292.d0/10357097424841.d0 /)
+                          10755448449292.d0/10357097424841.d0 /)
         ! Explicit Butcher Table (vectors)
         ap%ce(1:4) = ap%ci(1:4)
         ap%be(1:4) = ap%bi(1:4)
@@ -811,7 +888,7 @@ contains
         ap%be2(3) = 9247589265047.d0/10645013368117.d0
         ap%be2(4) = 2193209047091.d0/5459859503100.d0
 
-      case (ARK436_ARK)
+      case (ARK436_ARK) ! NOT TESTED
         ap%imex = 2 ! imex
         ap%s = 6 ! 6 stage
         ap%q = 4 ! 4th order
@@ -854,6 +931,50 @@ contains
         ap%be2(1:6) = (/ 4586570599.d0/29645900160.d0, 0.d0, 178811875.d0/945068544.d0, &
                         814220225.d0/1159782912.d0, -3700637.d0/11593932.d0, &
                         61727.d0/225920.d0 /)
+
+      case (SSP3333B_ARK)
+        ap%imex = 2 ! imex
+        ap%s = 3 ! 3 stage
+        ap%q = 3 ! 3rd order
+        ap%p = 0 ! no embedded order
+        ap%be2 = 0.d0 ! no embedded explicit method
+        ! Implicit Butcher Table (matrix)
+        ap%Ai(1:3,1:3) = 0.d0
+        ap%Ai(2,1:2) = (/      0.d0,       1.d0 /)
+        ap%Ai(3,1:3) = (/ 1.d0/6.d0, -1.d0/3.d0, 2.d0/3.d0 /)
+        ! Implicit Butcher Table (vectors)
+        ap%ci(1:3) = (/ 0.d0, 1.d0, 0.5d0 /)
+        ap%bi(1:3) = (/ 1.d0/6.d0, 1.d0/6.d0, 2.d0/3.d0 /)
+        ! Explicit Butcher Table (matrix)
+        ap%Ae(1:3,1:3) = 0.d0
+        ap%Ae(2,1) = 1.d0
+        ap%Ae(3,1:2) = (/ 0.25d0, 0.25d0 /)
+        ! Explicit Butcher Table (vectors)
+        ap%ce(1:3) = ap%ci(1:3)
+        ap%be(1:3) = ap%bi(1:3)
+
+      case (SSP3333C_ARK)
+        ap%imex = 2 ! imex
+        ap%s = 3 ! 3 stage
+        ap%q = 3 ! 3rd order
+        ap%p = 0 ! no embedded order
+        ap%be2 = 0.d0 ! no embedded explicit method
+        beta = sqrt(3.d0)/5.d0 + 0.5d0
+        gamma = -1.d0/8.d0*(sqrt(3.d0) + 1.d0)
+        ! Implicit Butcher Table (matrix)
+        ap%Ai(1:3,1:3) = 0.d0
+        ap%Ai(2,1:2) = (/ 4.d0*gamma + 2.d0*beta, 1.d0 - 4.d0*gamma - 2.d0*beta /)
+        ap%Ai(3,1:3) = (/   0.5d0 - beta - gamma,                         gamma, beta /)
+        ! Implicit Butcher Table (vectors)
+        ap%ci(1:3) = (/ 0.d0, 1.d0, 0.5d0 /)
+        ap%bi(1:3) = (/ 1.d0/6.d0, 1.d0/6.d0, 2.d0/3.d0 /)
+        ! Explicit Butcher Table (matrix)
+        ap%Ae(1:3,1:3) = 0.d0
+        ap%Ae(2,1) = 1.d0
+        ap%Ae(3,1:2) = (/ 0.25d0, 0.25d0 /)
+        ! Explicit Butcher Table (vectors)
+        ap%ce(1:3) = ap%ci(1:3)
+        ap%be(1:3) = ap%bi(1:3)
 
       case default
         call abortmp('Unknown ARKode Butcher table name')
