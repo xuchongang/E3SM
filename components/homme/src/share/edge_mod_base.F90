@@ -434,6 +434,16 @@ endif
     deallocate(edge%putmap)
     deallocate(edge%getmap)
     deallocate(edge%reverse)
+
+    deallocate(edge%moveLength)
+    deallocate(edge%movePtr)
+
+    deallocate(edge%Srequest)
+    deallocate(edge%Rrequest)
+    deallocate(edge%status)
+
+
+
 #if (defined HORIZ_OPENMP)
 !$OMP END MASTER
 #endif
