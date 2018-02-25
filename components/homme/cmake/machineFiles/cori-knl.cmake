@@ -13,7 +13,7 @@ SET (HDF5_DIR $ENV{HDF5_DIR} CACHE FILEPATH "")
 
 SET (MKLROOT $ENV{MKLROOT} CACHE FILEPATH "")
 
-SET (ADD_Fortran_FLAGS "-traceback" CACHE STRING "")
+SET (ADD_Fortran_FLAGS "-traceback -craype-verbose" CACHE STRING "")
 
 SET (CMAKE_SYSTEM_NAME Catamount CACHE FILEPATH "")
 
@@ -25,6 +25,8 @@ SET (USE_MPIEXEC "srun" CACHE STRING "")
 SET (USE_MPI_OPTIONS "-c 4 --cpu_bind=cores" CACHE STRING "")
 
 
+# by default, cori env loads haswell mod, do
+# module unload craype-haswell ; module load craype-mic-knl
 #
 # NOTE: 2018/2: none of the below seems necessary as long as these modules are loaded:
 #  module load cray-netcdf-hdf5parallel
