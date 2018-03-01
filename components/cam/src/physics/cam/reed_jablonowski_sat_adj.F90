@@ -1,3 +1,32 @@
+module reed_jablonowski_condensation_model
+
+  use cam_logfile,    only: iulog
+  use cam_abortutils, only: endrun
+  use ppgrid,       only: pver, pcols
+
+  implicit none
+  private
+  public :: reed_jablonowski_sat_adj_tend
+  public :: reed_jablonowski_init
+
+contains
+
+  !------------------------------------------------------------------------
+  ! Initialization of the reed_jablonowski simple condensation model.
+  ! Currently this contains just registration of output variables.
+  !------------------------------------------------------------------------
+
+  subroutine reed_jablonowski_init()
+
+    use cam_history,    only: addfld
+
+    implicit none
+!!!!add history fileds!!!!!!!!!!!!!!!!!!!!!
+    call addfld ('RKZ_dqdt', (/'lev'/), 'I', 'kg/kg/s', 'condensation rate in the Reed-Jablonowski scheme')
+    call addfld ('RKZ_dsdt', (/'lev'/), 'I', 'J/kg/s', 'dry static energy tendency in the Reed-Jablonowski scheme')
+
+  end subroutine reed_jablonowski_init
+
 
 subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
 !----------------------------------------------------------------------- 
@@ -19,6 +48,8 @@ subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
    use ppgrid,       only: pver, pcols
    use constituents, only: pcnst
    use physics_types,only: physics_state, physics_ptend, physics_ptend_init
+   use cam_history,    only: addfld
+   use cam_history,   only: outfld
 
    implicit none
 !
@@ -92,6 +123,8 @@ subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
    real(r8) qsat                        ! Saturation vapor pressure
    real(r8) qsats                       ! Saturation vapor pressure of SST
 
+  integer lchnk                  ! index of (grid) chunk handled by this call of the subroutine
+
 
 !===============================================================================
 !
@@ -135,6 +168,7 @@ subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
 !===============================================================================
 !===============================================================================
     ncol  = state%ncol
+    lchnk = state%lchnk  ! needed by "call outfld" for model output
 
 ! input
 
@@ -152,7 +186,7 @@ subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
     precl(:ncol) = 0._r8                  ! initialize precipitation rate with zero
     dsdt(:ncol,:pver)  = 0._r8            ! initialize temperature tendency with zero
     dqdt(:ncol,:pver)  = 0._r8            ! initialize specific humidity tendency with zero
-    
+ 
 !===============================================================================
 !
 ! Large-Scale Condensation and Precipitation Rate
@@ -168,7 +202,7 @@ subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
                tmp  = 1._r8/dtime*(q(i,k)-qsat)/(1._r8+(latvap/cpair)*(epsilo*latvap*qsat/(rair*t(i,k)**2)))
                dsdt(i,k) = dsdt(i,k)+latvap*tmp
                dqdt(i,k) = dqdt(i,k)-tmp
-               precl(i) = precl(i) + tmp*pdel(i,k)/(gravit*rhow)                    ! precipitation rate, computed via a vertical integral
+               precl(i)  = precl(i) + tmp*pdel(i,k)/(gravit*rhow)                    ! precipitation rate, computed via a vertical integral
                                                                                     ! corrected in version 1.3
             end if
          end do
@@ -177,6 +211,9 @@ subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
       ptend%q(:ncol,:pver,1) = dqdt(:ncol,:pver)
       ptend%s(:ncol,:pver)   = dsdt(:ncol,:pver)
 
+   call outfld('RKZ_dqdt', dqdt, pcols, lchnk)
+   call outfld('RKZ_dsdt', dsdt, pcols, lchnk)
+   
 !===============================================================================
 ! Send variables to history file - THIS PROCESS WILL BE MODEL SPECIFIC
 !
@@ -198,3 +235,4 @@ subroutine reed_jablonowski_sat_adj_tend( state, ptend, dtime )
    return
 end subroutine reed_jablonowski_sat_adj_tend 
 
+end module reed_jablonowski_condensation_model
