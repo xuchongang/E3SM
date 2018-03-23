@@ -638,6 +638,9 @@ for mct, etc.
 
 <!-- Intel v18 is default on cori-knl and cori-haswell -->
 <compiler COMPILER="intel" MACH="cori-knl">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <FFLAGS> -convert big_endian -assume byterecl -ftz -traceback -assume realloc_lhs -fp-model consistent -fimf-use-svml </FFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 -debug minimal -qno-opt-dynamic-align</ADD_FFLAGS>
   <ADD_CFLAGS compile_threaded="true"> -qopenmp </ADD_CFLAGS>
@@ -655,6 +658,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel" MACH="cori-haswell">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <FFLAGS> -convert big_endian -assume byterecl -ftz -traceback -assume realloc_lhs -fp-model consistent -fimf-use-svml </FFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 -debug minimal -qno-opt-dynamic-align </ADD_FFLAGS>
   <ADD_CFLAGS compile_threaded="true"> -qopenmp </ADD_CFLAGS>
@@ -672,6 +678,9 @@ for mct, etc.
 
 <!-- Use Intel MPI with intel compiler on cori-knl -->
 <compiler COMPILER="intel" MACH="cori-knl" MPILIB="impi">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <!-- When using Intel MPI, can't use the Cray compiler wrappers. Must also set environment variables in config_machines.xml -->
   <MPI_LIB_NAME>impi</MPI_LIB_NAME>
   <MPIFC> mpiifort </MPIFC>
@@ -771,6 +780,12 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="gnu" MACH="anlworkstation">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_CFLAGS>
+  <ADD_FFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_FFLAGS>
+  <ADD_LDFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_LDFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2  </ADD_FFLAGS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2  </ADD_CFLAGS>
   <CONFIG_ARGS> --host=Linux </CONFIG_ARGS>
@@ -934,6 +949,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel" MACH="titan">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2 </ADD_CFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 </ADD_FFLAGS>
   <CONFIG_ARGS> --host=Linux </CONFIG_ARGS>
@@ -950,6 +968,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="pgi" MACH="titan">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2 </ADD_CFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 </ADD_FFLAGS>
   <ADD_FFLAGS MODEL="glc"> -target-cpu=istanbul </ADD_FFLAGS>
@@ -972,6 +993,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="pgiacc" MACH="titan">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2 </ADD_CFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 </ADD_FFLAGS>
   <CONFIG_ARGS> --host=Linux </CONFIG_ARGS>
@@ -1040,6 +1064,9 @@ for mct, etc.
 
 
 <compiler COMPILER="ibm" MACH="mira">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <SFC> mpixlf2003_r </SFC>
   <MPIFC> mpixlf2003_r </MPIFC>
   <SCC> mpixlc_r </SCC>
@@ -1159,6 +1186,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="ibm" MACH="cetus">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <SFC> mpixlf2003_r </SFC>
   <MPIFC> mpixlf2003_r </MPIFC>
   <SCC> mpixlc_r </SCC>
@@ -1201,6 +1231,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="pgi" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="openmpi">/soft/openmpi/1.8.2/pgi-13.9</MPI_PATH>
@@ -1214,6 +1247,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel13" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="openmpi">/soft/openmpi/1.8.2/intel-13.1</MPI_PATH>
@@ -1232,6 +1268,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="mvapich">/soft/mvapich2/2.2b_psm/intel-15.0</MPI_PATH>
@@ -1249,6 +1288,12 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="gnu" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_CFLAGS>
+  <ADD_FFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_FFLAGS>
+  <ADD_LDFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_LDFLAGS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="mvapich">/blues/gpfs/home/software/spack/opt/spack/linux-x86_64/gcc-5.3.0/mvapich2-2.2b-sdh7nhddicl4sh5mgxjyzxtxox3ajqey</MPI_PATH>
@@ -1261,6 +1306,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="nag" MACH="blues">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <PNETCDF_PATH>$(PNETCDFROOT)</PNETCDF_PATH>
   <NETCDF_PATH>$(NETCDFROOT)</NETCDF_PATH>
   <MPI_PATH MPILIB="mpich">/home/robl/soft/mpich-3.1.4-nag-6.0</MPI_PATH>
@@ -1270,6 +1318,9 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="intel" MACH="anvil">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 -debug minimal -qno-opt-dynamic-align</ADD_FFLAGS>
   <ADD_CFLAGS compile_threaded="true"> -qopenmp -static-intel</ADD_CFLAGS>
   <ADD_FFLAGS compile_threaded="true"> -qopenmp -static-intel</ADD_FFLAGS>
@@ -1284,18 +1335,30 @@ for mct, etc.
 </compiler>
 
 <compiler COMPILER="gnu" MACH="anvil">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_CFLAGS>
+  <ADD_FFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_FFLAGS>
+  <ADD_LDFLAGS> -fsanitize=address -fno-omit-frame-pointer </ADD_LDFLAGS>
   <ADD_SLIBS>$(shell $(NETCDF_PATH)/bin/nf-config --flibs) -llapack -lblas</ADD_SLIBS>
   <GPTL_CPPDEFS> -DHAVE_NANOTIME -DBIT64 -DHAVE_SLASHPROC -DHAVE_GETTIMEOFDAY</GPTL_CPPDEFS>
   <PIO_FILESYSTEM_HINTS>gpfs </PIO_FILESYSTEM_HINTS>
 </compiler>
 
 <compiler COMPILER="pgi" MACH="anvil">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_SLIBS>$(shell $(NETCDF_PATH)/bin/nf-config --flibs) -llapack -lblas</ADD_SLIBS>
   <ADD_SLIBS> -rpath $(NETCDF_PATH)/lib </ADD_SLIBS>
   <PIO_FILESYSTEM_HINTS>gpfs </PIO_FILESYSTEM_HINTS>
 </compiler>
 
 <compiler COMPILER="intel" MACH="bebop">
+  <ADD_CPPDEFS MODEL="ice"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="ocn"> -DUSE_PIO2 </ADD_CPPDEFS>
+  <ADD_CPPDEFS MODEL="glc"> -DUSE_PIO2 </ADD_CPPDEFS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 -debug minimal -qno-opt-dynamic-align</ADD_FFLAGS>
   <ADD_CFLAGS compile_threaded="true"> -qopenmp </ADD_CFLAGS>
   <ADD_FFLAGS compile_threaded="true"> -qopenmp </ADD_FFLAGS>
