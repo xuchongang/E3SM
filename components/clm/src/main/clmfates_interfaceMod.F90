@@ -1643,15 +1643,18 @@ contains
 	    this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) = -999.0_r8
 		 this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = 999.0_r8
 	    end if
-
-	    ! Calculating maximum and minimum daily air temperatures at reference height.
-	    ! I need to make sure that this is not recoreded at every half hour time
-	    ! step as we need it at a daily time step.
-	    this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) &
-	    	= max(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp))
 	    
-	    this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) &
-	    	= min(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp))
+	    if(use_fates_insect) then
+	   	! Calculating maximum and minimum daily air temperatures at reference height.
+	    	! I need to make sure that this is not recoreded at every half hour time
+	    	! step as we need it at a daily time step.
+	    	this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) &
+	    		= max(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp))
+	    
+	    	this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) &
+	    		= min(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp))
+	    end if 
+
 	    !-----------------------------------------------------------------------------  
 	       
             end if
