@@ -1654,7 +1654,6 @@ contains
 	    	this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) &
 	    		= min(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp))
 	    end if 
-
 	    !-----------------------------------------------------------------------------  
 	       
             end if
