@@ -1646,7 +1646,7 @@ contains
 	    
 	    if(use_fates_insect) then
 	   	! Calculating maximum and minimum daily air temperatures at reference height.
-	    	! I need to make sure that this is not recoreded at every half hour time
+	    	! I need to make sure that this is not recorded at every half hour time
 	    	! step as we need it at a daily time step.
 	    	this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) &
 	    		= max(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp))
