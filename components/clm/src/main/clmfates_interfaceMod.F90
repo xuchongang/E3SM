@@ -1646,7 +1646,7 @@ contains
 		 this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = 999.0_r8
 	    end if
 	    
-	    if(use_fates_insect .and. hlm_current_tod > 0) then
+	    if(hlm_current_tod > 0) then
 	   	! Calculating maximum and minimum daily air temperatures at reference height.
 	    	! I need to make sure that this is not recorded at every half hour time
 	    	! step as we need it at a daily time step.
