@@ -1641,7 +1641,7 @@ contains
 	    !-----------------------------------------------------------------------------   
 	    ! Below I do calculations of mean daily minimum and maximum air temperature.
 	    ! First we reset the temperatures at the beginning of each day.
-	    if(hlm_current_tod > 0 .and. hlm_current_tod < dtime + 0.001_r8) then
+	    if(hlm_current_tod == 0.0_r8) then
 	    this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) = -999.0_r8
 		 this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = 999.0_r8
 	    end if
