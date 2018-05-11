@@ -1641,12 +1641,12 @@ contains
 	    !-----------------------------------------------------------------------------   
 	    ! Below I do calculations of mean daily minimum and maximum air temperature.
 	    ! First we reset the temperatures at the beginning of each day.
-	    if(hlm_current_tod == 0.0_r8) then
+	    if(hlm_current_tod == 0) then
 	    this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) = -999.0_r8
 		 this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = 999.0_r8
 	    end if
 	    
-	    if(use_fates_insect) then
+	    if(use_fates_insect .and. hlm_current_tod > 0) then
 	   	! Calculating maximum and minimum daily air temperatures at reference height.
 	    	! I need to make sure that this is not recorded at every half hour time
 	    	! step as we need it at a daily time step.
