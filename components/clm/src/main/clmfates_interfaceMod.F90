@@ -129,7 +129,8 @@ module CLMFatesInterfaceMod
    use FatesPlantHydraulicsMod, only : HydrSiteColdStart
    use FatesPlantHydraulicsMod, only : InitHydrSites
    use FatesPlantHydraulicsMod, only : UpdateH2OVeg
-   use FatesInterfaceMod      , only : bc_in_type, bc_out_type, hlm_current_tod
+   use FatesInterfaceMod      , only : bc_in_type, bc_out_type, 
+   
 
    implicit none
    
@@ -1642,8 +1643,8 @@ contains
 	    ! Below I do calculations of mean daily minimum and maximum air temperature.
 	    ! First we reset the temperatures at the beginning of each day.
 	    if(hlm_current_tod == 0) then
-	    this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) = -999.0_r8
-		 this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = 999.0_r8
+	    	this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) = this%fates(nc)%bc_in(s)%tgcm_pa(ifp) 
+		this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = this%fates(nc)%bc_in(s)%tgcm_pa(ifp) 
 	    end if
 	    
 	    if(hlm_current_tod > 0) then
@@ -1651,10 +1652,10 @@ contains
 	    	! I need to make sure that this is not recorded at every half hour time
 	    	! step as we need it at a daily time step.
 	    	this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) &
-	    		= max(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp))
+	    		= max(this%fates(nc)%bc_in(s)%tgcm_pa(ifp) ,this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp))
 	    
 	    	this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) &
-	    		= min(tgcm(p),this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp))
+	    		= min(this%fates(nc)%bc_in(s)%tgcm_pa(ifp) ,this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp))
 	    end if 
 	    !-----------------------------------------------------------------------------  
 	       
