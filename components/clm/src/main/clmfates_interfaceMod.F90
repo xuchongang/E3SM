@@ -1602,8 +1602,6 @@ contains
       
 
       nc = bounds_clump%clump_index
-      
-      dtime = get_step_size()
 
       do s = 1, this%fates(nc)%nsites
          
@@ -1642,6 +1640,8 @@ contains
             end if
          end do
       end do
+      
+      dtime = get_step_size()
       
       ! Call photosynthesis
       
