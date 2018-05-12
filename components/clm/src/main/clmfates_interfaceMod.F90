@@ -1638,26 +1638,6 @@ contains
                this%fates(nc)%bc_in(s)%rb_pa(ifp)          = rb(p)          ! boundary layer resistance (s/m)
                this%fates(nc)%bc_in(s)%t_veg_pa(ifp)       = t_veg(p)       ! vegetation temperature (Kelvin)     
                this%fates(nc)%bc_in(s)%tgcm_pa(ifp)        = tgcm(p)        ! air temperature at agcm reference height (kelvin)
-	    
-	    !-----------------------------------------------------------------------------   
-	    ! Below I do calculations of mean daily minimum and maximum air temperature.
-	    ! First we reset the temperatures at the beginning of each day.
-	    if(hlm_current_tod == 1) then
-	    	this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) = this%fates(nc)%bc_in(s)%tgcm_pa(ifp) 
-		this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = this%fates(nc)%bc_in(s)%tgcm_pa(ifp) 
-	    end if
-	    
-	    if(hlm_current_tod > 1) then
-	   	! Calculating maximum and minimum daily air temperatures at reference height.
-	    	! I need to make sure that this is not recorded at every half hour time
-	    	! step as we need it at a daily time step.
-	    	this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) &
-	    		= max(this%fates(nc)%bc_in(s)%tgcm_pa(ifp) ,this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp))
-	    
-	    	this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) &
-	    		= min(this%fates(nc)%bc_in(s)%tgcm_pa(ifp) ,this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp))
-	    end if 
-	    !-----------------------------------------------------------------------------  
 	       
             end if
          end do
