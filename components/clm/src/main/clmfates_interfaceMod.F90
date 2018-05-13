@@ -1594,6 +1594,8 @@ contains
           t_soisno  => temperature_inst%t_soisno_col , &
           t_veg     => temperature_inst%t_veg_patch  , &
           tgcm      => temperature_inst%thm_patch    , &
+	  tgcm_max  => temperature_inst%t_ref2m_max_inst_patch, &
+	  tgcm_min  => temperature_inst%t_ref2m_min_inst_patch, &
           forc_pbot => atm2lnd_inst%forc_pbot_downscaled_col, &
           rssun     => photosyns_inst%rssun_patch  , &
           rssha     => photosyns_inst%rssha_patch,   &
@@ -1636,6 +1638,10 @@ contains
                this%fates(nc)%bc_in(s)%rb_pa(ifp)          = rb(p)          ! boundary layer resistance (s/m)
                this%fates(nc)%bc_in(s)%t_veg_pa(ifp)       = t_veg(p)       ! vegetation temperature (Kelvin)     
                this%fates(nc)%bc_in(s)%tgcm_pa(ifp)        = tgcm(p)        ! air temperature at agcm reference height (kelvin)
+	       
+	       ! The following two boundary conditions are used in the insect models (maximum and minimum daily temperatures)
+	       this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp)    = tgcm_max(p)    ! max daily air temperature at agcm reference height (kelvin)
+	       this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp)    = tgcm_min(p)    ! max daily air temperature at agcm reference height (kelvin)
 	       
             end if
          end do
