@@ -1594,8 +1594,8 @@ contains
           t_soisno  => temperature_inst%t_soisno_col , &
           t_veg     => temperature_inst%t_veg_patch  , &
           tgcm      => temperature_inst%thm_patch    , &
-	  tgcm_max  => temperature_inst%t_ref2m_max_inst_patch, &
-	  tgcm_min  => temperature_inst%t_ref2m_min_inst_patch, &
+	  tgcm_max  => temperature_inst%t_ref2m_max_patch, &
+	  tgcm_min  => temperature_inst%t_ref2m_min_patch, &
           forc_pbot => atm2lnd_inst%forc_pbot_downscaled_col, &
           rssun     => photosyns_inst%rssun_patch  , &
           rssha     => photosyns_inst%rssha_patch,   &
