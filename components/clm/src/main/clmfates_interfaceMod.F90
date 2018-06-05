@@ -128,7 +128,7 @@ module CLMFatesInterfaceMod
    use FatesPlantHydraulicsMod, only : HydrSiteColdStart
    use FatesPlantHydraulicsMod, only : InitHydrSites
    use FatesPlantHydraulicsMod, only : UpdateH2OVeg
-   use FatesInterfaceMod      , only : bc_in_type, bc_out_type
+   use FatesInterfaceMod      , only : bc_in_type, bc_out_type, hlm_current_tod
 
    implicit none
    
@@ -1628,6 +1628,10 @@ contains
                this%fates(nc)%bc_in(s)%rb_pa(ifp)          = rb(p)          ! boundary layer resistance (s/m)
                this%fates(nc)%bc_in(s)%t_veg_pa(ifp)       = t_veg(p)       ! vegetation temperature (Kelvin)     
                this%fates(nc)%bc_in(s)%tgcm_pa(ifp)        = tgcm(p)        ! air temperature at agcm reference height (kelvin)
+	       
+	       ! The following two boundary conditions are used in the insect models (maximum and minimum daily temperatures)
+	       this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp)    = tgcm_max(p)    ! max daily air temperature at agcm reference height (kelvin)
+	       this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp)    = tgcm_min(p)    ! max daily air temperature at agcm reference height (kelvin)
             end if
          end do
       end do
