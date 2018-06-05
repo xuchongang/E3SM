@@ -245,6 +245,7 @@ contains
       integer                                        :: pass_logging
       integer                                        :: pass_ed_prescribed_phys
       integer                                        :: pass_planthydro
+      integer                                        :: pass_insect
       integer                                        :: pass_inventory_init
       integer                                        :: pass_is_restart
       integer                                        :: nc        ! thread index
@@ -343,6 +344,13 @@ contains
          pass_planthydro = 0
       end if
       call set_fates_ctrlparms('use_planthydro',ival=pass_planthydro)
+      
+      if(use_fates_insect) then
+         pass_insect = 1
+      else
+         pass_insect = 0
+      end if
+      call set_fates_ctrlparms('use_insect',ival=pass_insect)
 
       if(use_fates_inventory_init) then
          pass_inventory_init = 1
