@@ -46,6 +46,7 @@ module CLMFatesInterfaceMod
    use clm_varctl        , only : use_vertsoilc 
    use clm_varctl        , only : use_fates_spitfire
    use clm_varctl        , only : use_fates_planthydro
+   use clm_varctl        , only : use_fates_insect
    use clm_varctl        , only : use_fates_ed_st3
    use clm_varctl        , only : use_fates_ed_prescribed_phys
    use clm_varctl        , only : use_fates_logging
