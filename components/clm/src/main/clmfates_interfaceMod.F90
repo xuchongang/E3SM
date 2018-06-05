@@ -638,7 +638,13 @@ contains
             p = ifp+col_pp%pfti(c)
             this%fates(nc)%bc_in(s)%t_veg24_pa(ifp) = &
                  temperature_inst%t_veg24_patch(p)
-
+		 
+	    this%fates(nc)%bc_in(s)%tgcm_max_pa(ifp) = &
+                 temperature_inst%t_ref2m_max_r_patch(p)
+		 
+	    this%fates(nc)%bc_in(s)%tgcm_min_pa(ifp) = &
+                 temperature_inst%t_ref2m_min_r_patch(p)	
+ 
             this%fates(nc)%bc_in(s)%precip24_pa(ifp) = &
                   atm2lnd_inst%prec24_patch(p)
 
