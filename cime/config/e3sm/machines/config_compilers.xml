@@ -292,7 +292,7 @@ for mct, etc.
        diagnostics. This is a band-aid fix, which should really be addressed at the
        system-level. (Note: I could not add this in the yellowstone-specific section,
        beacuse apparently that overrides rather than adds to this ADD_FFLAGS list.) -->
-  <ADD_FFLAGS DEBUG="TRUE"> -O0 -g -check uninit -check bounds -check pointers -fpe0 -check noarg_temp_created </ADD_FFLAGS>
+  <ADD_FFLAGS DEBUG="TRUE"> -O0 -g -check uninit -check bounds -check pointers -fpe0 -check noarg_temp_created -init=snan,arrays -traceback </ADD_FFLAGS>
   <ADD_FFLAGS DEBUG="FALSE"> -O2 -debug minimal </ADD_FFLAGS>
   <ADD_CFLAGS DEBUG="FALSE"> -O2 -debug minimal </ADD_CFLAGS>
   <ADD_CFLAGS DEBUG="TRUE"> -O0 -g </ADD_CFLAGS>

@@ -179,7 +179,7 @@ contains
     ! !LOCAL VARIABLES:
     integer              :: nstep                   ! time step number
     real(r8)             :: dtime                   ! land model time step (sec)
-    integer              :: nc, c, p, l, g          ! indices
+    integer              :: nc, c, p, l, g, fc      ! indices
     integer              :: nclumps                 ! number of clumps on this processor
     integer              :: yrp1                    ! year (0, ...) for nstep+1
     integer              :: monp1                   ! month (1, ..., 12) for nstep+1
@@ -1028,6 +1028,16 @@ contains
              
           end if
 
+          ! Bringing this out of HydrologyDrainage() so that changes in total_plant_stored_h2o_col
+          ! due to mortality, growth, turnover, and phenology are accounted for in endwb.
+          ! Else HLM BalanceCheck will fail (BOC 06-Aug-2018)
+          ! This could also be outside the if(use_fates) statement with no change (BOC 06-Aug-2018)
+          do fc = 1, filter(nc)%num_nolakec
+             c = filter(nc)%nolakec(fc)
+             waterstate_vars%endwb_col(c) = waterstate_vars%endwb_col(c) + &
+                                            waterstate_vars%total_plant_stored_h2o_col(c)
+          end do
+      
           ! ------------------------------------------------------------------------------
           ! Perform reduced capacity soil-bgc only calculations when FATES/ED is on
           ! ------------------------------------------------------------------------------

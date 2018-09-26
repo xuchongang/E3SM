@@ -504,6 +504,11 @@ contains
          avgflag='A', long_name='total water conservation error', &
          ptr_col=this%errh2o_col)
 
+    this%total_plant_stored_h2o_col(begc:endc) = spval
+    call hist_addfld1d (fname='PLANTH2O', units='mm',  &
+         avgflag='A', long_name='total plant stored water', &
+         ptr_col=this%total_plant_stored_h2o_col)
+
     this%errh2osno_col(begc:endc) = spval
     call hist_addfld1d (fname='ERRH2OSNO',  units='mm',  &
          avgflag='A', long_name='imbalance in snow depth (liquid water)', &

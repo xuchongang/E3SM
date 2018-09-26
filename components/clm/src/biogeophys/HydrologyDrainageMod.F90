@@ -188,10 +188,10 @@ contains
       ! Other orthogonal modules should not need to worry about this term,
       ! and it should be zero in all other cases and all other columns.
       ! ---------------------------------------------------------------------------------
-      do fc = 1, num_nolakec
-         c = filter_nolakec(fc)
-         endwb(c) = endwb(c) + total_plant_stored_h2o(c)
-      end do
+      !do fc = 1, num_nolakec
+      !   c = filter_nolakec(fc)
+      !   endwb(c) = endwb(c) + total_plant_stored_h2o(c)
+      !end do
       
       ! Prior to summing up wetland/ice hydrology, calculate land ice contributions/sinks
       ! to this hydrology.

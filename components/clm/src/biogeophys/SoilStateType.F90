@@ -676,7 +676,7 @@ contains
                 else
                    uncon_hksat = 0._r8
                 end if
-                this%hksat_col(c,lev)  = uncon_frac*uncon_hksat + (perc_frac*om_frac)*om_hksat
+                this%hksat_col(c,lev)  = 10._r8*(uncon_frac*uncon_hksat + (perc_frac*om_frac)*om_hksat)
 
                 this%tkmg_col(c,lev)   = tkm ** (1._r8- this%watsat_col(c,lev))           
 
