@@ -107,6 +107,7 @@ module CLMFatesInterfaceMod
 
    use ChecksBalancesMod     , only : SummarizeNetFluxes, FATES_BGC_Carbon_BalanceCheck
    use EDTypesMod            , only : ed_patch_type
+   use EDTypesMod            , only : do_fates_salinity
    use FatesInterfaceMod     , only : hlm_numlevgrnd
    use EDMainMod             , only : ed_ecosystem_dynamics
    use EDMainMod             , only : ed_update_site
@@ -127,6 +128,7 @@ module CLMFatesInterfaceMod
    use FatesPlantHydraulicsMod, only : InitHydrSites
    use FatesPlantHydraulicsMod, only : UpdateH2OVeg
    use FatesInterfaceMod      , only : bc_in_type, bc_out_type
+   use FatesBstressMod        , only : btran_sal_stress_fates
 
    implicit none
    
@@ -450,6 +452,9 @@ contains
             call allocate_bcout(this%fates(nc)%bc_out(s),col_pp%nlevbed(c),ndecomp)
             
             call this%fates(nc)%zero_bcs(s)
+	    
+	    call this%fates(nc)%set_bcs(s) !set conditions for boundary that 
+	                                   !has not yet been passed by the host model yet
 
             ! Pass any grid-cell derived attributes to the site
             ! ---------------------------------------------------------------------------
@@ -1542,6 +1547,15 @@ contains
              this%fates(nc)%sites,  &
              this%fates(nc)%bc_in,  &
              this%fates(nc)%bc_out)
+	     
+	!----------------------------------------------------------------------------------
+	!Calculate the impact of soil salinity impact on btran
+	! ---------------------------------------------------------------------------------
+	if(do_fates_salinity)then
+	  call btran_sal_stress_fates(this%fates(nc)%nsites, &
+             this%fates(nc)%sites,  &
+             this%fates(nc)%bc_in)
+	endif
 
         ! -------------------------------------------------------------------------------
         ! Convert output BC's
