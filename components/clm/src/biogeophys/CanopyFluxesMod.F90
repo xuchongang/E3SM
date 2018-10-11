@@ -54,6 +54,7 @@ module CanopyFluxesMod
   ! !PUBLIC DATA MEMBERS:
   ! true => btran is based only on unfrozen soil levels
   logical,  public :: perchroot     = .false.  
+  logical,  public :: dyn_leaf_vp   = .true.
 
   ! true  => btran is based on active layer (defined over two years); 
   ! false => btran is based on currently unfrozen levels
@@ -311,6 +312,7 @@ contains
     integer  :: jtop(bounds%begc:bounds%endc)            ! lbning
     integer  :: filterc_tmp(bounds%endp-bounds%begp+1)   ! temporary variable
     integer  :: ft                                       ! plant functional type index
+    real(r8) :: leaf_humidity_scaler                     ! scaler of humidity within stomata of leaves
     real(r8) :: temprootr                 
     real(r8) :: dt_veg_temp(bounds%begp:bounds%endp)
     integer  :: iv
@@ -348,7 +350,8 @@ contains
          laisun               => canopystate_vars%laisun_patch             , & ! Input:  [real(r8) (:)   ]  sunlit leaf area                                                      
          laisha               => canopystate_vars%laisha_patch             , & ! Input:  [real(r8) (:)   ]  shaded leaf area                                                      
          displa               => canopystate_vars%displa_patch             , & ! Input:  [real(r8) (:)   ]  displacement height (m)                                               
-         htop                 => canopystate_vars%htop_patch               , & ! Input:  [real(r8) (:)   ]  canopy top(m)                                                         
+         htop                 => canopystate_vars%htop_patch               , & ! Input:  [real(r8) (:)   ]  canopy top(m)   
+	 lwp                  => canopystate_vars%lwp_patch                , & ! Input:  [real(r8) (:)   ]  leaf area weighted leaf water potential (MPa)                                                      
          altmax_lastyear_indx => canopystate_vars%altmax_lastyear_indx_col , & ! Input:  [integer  (:)   ]  prior year maximum annual depth of thaw                                
          altmax_indx          => canopystate_vars%altmax_indx_col          , & ! Input:  [integer  (:)   ]  maximum annual depth of thaw                                           
 
@@ -925,8 +928,13 @@ contains
             if (use_lch4) then
                canopy_cond(p) = (laisun(p)/(rb(p)+rssun(p)) + laisha(p)/(rb(p)+rssha(p)))/max(elai(p), 0.01_r8)
             end if
-
-            efpot = forc_rho(c)*wtl*(qsatl(p)-qaf(p))
+      
+            leaf_humidity_scaler = 1.0_r8
+            if(dyn_leaf_vp)then
+	      leaf_humidity_scaler  = exp(lwp(p)*18.0_r8/(8.314_r8*t_veg(p)))
+	      leaf_humidity_scaler  = min(1.0_r8,leaf_humidity_scaler)
+	    endif
+            efpot = forc_rho(c)*wtl*(qsatl(p)*leaf_humidity_scaler-qaf(p))
 
             if (efpot > 0._r8) then
                if (btran(p) > btran0) then

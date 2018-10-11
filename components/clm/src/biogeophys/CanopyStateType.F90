@@ -10,7 +10,7 @@ module CanopyStateType
   use landunit_varcon , only : istsoil, istcrop
   use clm_varcon      , only : spval  
   use clm_varpar      , only : nlevcan
-  use clm_varctl      , only : iulog, use_cn, use_fates
+  use clm_varctl      , only : iulog, use_cn, use_fates, use_fates_planthydro
   use LandunitType    , only : lun_pp                
   use ColumnType      , only : col_pp                
   use VegetationType       , only : veg_pp                
@@ -42,6 +42,7 @@ module CanopyStateType
      real(r8) , pointer :: fsun_patch               (:)   ! patch sunlit fraction of canopy         
      real(r8) , pointer :: fsun24_patch             (:)   ! patch 24hr average of sunlit fraction of canopy 
      real(r8) , pointer :: fsun240_patch            (:)   ! patch 240hr average of sunlit fraction of canopy
+     real(r8) , pointer :: lwp_patch                (:)   ! patch canopy leaf area weighted leaf water potential (MPa)
 
      real(r8) , pointer :: alt_col                  (:)   ! col current depth of thaw 
      integer  , pointer :: alt_indx_col             (:)   ! col current depth of thaw 
@@ -124,6 +125,7 @@ contains
     allocate(this%fsun_patch               (begp:endp))           ; this%fsun_patch               (:)   = nan
     allocate(this%fsun24_patch             (begp:endp))           ; this%fsun24_patch             (:)   = nan
     allocate(this%fsun240_patch            (begp:endp))           ; this%fsun240_patch            (:)   = nan
+    allocate(this%lwp_patch                (begp:endp))           ; this%lwp_patch                (:)   = nan
 
     allocate(this%alt_col                  (begc:endc))           ; this%alt_col                  (:)   = spval;     
     allocate(this%altmax_col               (begc:endc))           ; this%altmax_col               (:)   = spval
@@ -216,6 +218,13 @@ contains
        call hist_addfld1d (fname='HBOT', units='m', &
             avgflag='A', long_name='canopy bottom', &
             ptr_patch=this%hbot_patch, default='inactive')
+    end if
+    
+    if (use_fates_planthydro .and. use_fates) then
+       this%lwp_patch(begp:endp) = spval
+       call hist_addfld1d (fname='LWP', units='m', &
+            avgflag='A', long_name='Leaf area weighted leaf water potential(MPa)', &
+            ptr_patch=this%lwp_patch)
     end if
 
     if (use_cn .or. use_fates) then
@@ -436,6 +445,7 @@ contains
        this%htop_patch(p)       = 0._r8
        this%hbot_patch(p)       = 0._r8
        this%dewmx_patch(p)      = 0.1_r8
+       this%lwp_patch(p)        = 0._r8
 
        if (lun_pp%itype(l) == istsoil .or. lun_pp%itype(l) == istcrop) then
           this%laisun_patch(p) = 0._r8

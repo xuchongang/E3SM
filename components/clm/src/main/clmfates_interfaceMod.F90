@@ -778,6 +778,7 @@ contains
          esai => canopystate_inst%esai_patch , &
          htop => canopystate_inst%htop_patch , &
          hbot => canopystate_inst%hbot_patch , & 
+	 lwp  => canopystate_inst%lwp_patch,   &
          z0m  => frictionvel_inst%z0m_patch  , & ! Output: [real(r8) (:)   ] momentum roughness length (m)      
          displa => canopystate_inst%displa_patch, &
          dleaf_patch => canopystate_inst%dleaf_patch, &
@@ -892,6 +893,9 @@ contains
              tsai(p) = this%fates(nc)%bc_out(s)%tsai_pa(ifp)
              hbot(p) = this%fates(nc)%bc_out(s)%hbot_pa(ifp)
              htop(p) = this%fates(nc)%bc_out(s)%htop_pa(ifp)
+	     if (use_fates_planthydro)then
+	       lwp(p)  = this%fates(nc)%bc_out(s)%lwp_pa(ifp)
+	     endif
              frac_veg_nosno_alb(p) = this%fates(nc)%bc_out(s)%frac_veg_nosno_alb_pa(ifp)
 
              ! Note that while we pass the following values at this point
