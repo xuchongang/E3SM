@@ -30,6 +30,7 @@ CP    := cp
 exec_se: $(EXEC_SE)  Depends
 complib: $(COMPLIB)  Depends
 
+
 CIME_MODEL ?= $(shell $(CASEROOT)/xmlquery --caseroot $(CASEROOT) MODEL --value)
 EXEROOT ?= $(shell $(CASEROOT)/xmlquery --caseroot $(CASEROOT) EXEROOT --value)
 SMP_PRESENT ?= $(shell $(CASEROOT)/xmlquery --caseroot $(CASEROOT) SMP_PRESENT --value)
@@ -79,6 +80,12 @@ ifeq ($(strip $(USE_TRILINOS)), TRUE)
 endif
 ifeq ($(strip $(USE_ALBANY)), TRUE)
    USE_CXX = true
+endif
+
+HOMME_TARGET ?= $(shell $(CASEROOT)/xmlquery --caseroot $(CASEROOT) CAM_TARGET --value)
+ifeq ($(strip $(HOMME_TARGET)), preqx_kokkos)
+   USE_CXX = true
+   USE_KOKKOS = TRUE
 endif
 
 ifndef MOD_SUFFIX
@@ -179,7 +186,7 @@ ifdef NETCDF_C_PATH
     LIB_NETCDF_C:=$(NETCDF_C_PATH)/lib
   endif
   ifndef LIB_NETCDF_FORTRAN
-    LIB_NETCDF_FORTRAN:=$(NETCDF_C_PATH)/lib
+    LIB_NETCDF_FORTRAN:=$(NETCDF_FORTRAN_PATH)/lib
   endif
  else ifdef NETCDF_FORTRAN_PATH
   $(error "NETCDF_FORTRAN_PATH specified without NETCDF_C_PATH")
@@ -268,6 +275,16 @@ ifeq ($(strip $(USE_ALBANY)), TRUE)
 
   # get the "ALBANY_LINK_LIBS" list as an env var
   include $(ALBANY_PATH)/export_albany.in
+endif
+
+ifeq ($(strip $(USE_KOKKOS)), TRUE)
+  ifdef KOKKOS_PATH
+    INC_KOKKOS:=$(KOKKOS_PATH)/include
+    LIB_KOKKOS:=$(KOKKOS_PATH)/lib
+  else
+    $(error $(HOMME_TARGET) requires env. variable KOKKOS_ROOT to be set)
+  endif
+	CPPDEFS += -DUSE_KOKKOS_KERNELS
 endif
 
 # Set MOAB info if it is being used
@@ -392,6 +409,9 @@ endif
 ifdef INC_ALBANY
   INCLDIR += -I$(INC_ALBANY)
 endif
+ifdef INC_KOKKOS
+  INCLDIR += -I$(INC_KOKKOS)
+endif
 ifdef INC_MOAB
   INCLDIR += -I$(INC_MOAB)
 endif
@@ -417,7 +437,7 @@ else
        # nagfor runtime to get autoconf
        # tests to work.
          CFLAGS += -Wl,--as-needed,--allow-shlib-undefined
-         SLIBS += -L$(COMPILER_PATH)/lib/NAG_Fortran -lf60rts
+         SLIBS += -L$(COMPILER_PATH)/lib/NAG_Fortran -lf62rts
        endif
     endif
   endif
@@ -453,7 +473,7 @@ INCLDIR +=	-I$(INSTALL_SHAREDPATH)/include
 # Use the MCT dir for the cache for all configure calls because it is the first one
 #
 CFLAGS+=$(CPPDEFS)
-CXXFLAGS := $(CFLAGS)
+CXXFLAGS+=$(CPPDEFS)
 
 CONFIG_ARGS +=  CC="$(CC)" FC="$(FC)" MPICC="$(MPICC)" \
                 MPIFC="$(MPIFC)" FCFLAGS="$(FFLAGS) $(FREEFLAGS) $(INCLDIR)" \
@@ -477,8 +497,8 @@ FFLAGS_NOOPT += $(FPPDEFS)
 
 
 ifeq ($(findstring -cosp,$(CAM_CONFIG_OPTS)),-cosp)
-# The following is for the COSP simulator code:
-COSP_LIBDIR:=$(abspath $(EXEROOT)/atm/obj/cosp)
+  # The following is for the COSP simulator code:
+  COSP_LIBDIR:=$(abspath $(EXEROOT)/atm/obj/cosp)
 endif
 
 ifeq ($(MODEL),cam)
@@ -535,6 +555,9 @@ ifdef LIB_MPI
    else
       SLIBS += -L$(LIB_MPI) -l$(MPI_LIB_NAME)
    endif
+endif
+ifdef LIB_KOKKOS
+   SLIBS += -L$(LIB_KOKKOS) -lkokkos
 endif
 
 # For compiling and linking with external ESMF.
@@ -849,21 +872,23 @@ $(MCTLIBS)  : $(MPISERIAL)
 $(PIOLIB) : $(MPISERIAL) $(GPTLLIB)
 
 $(CSMSHARELIB):  $(MCTLIBS) $(PIOLIB) $(GPTLLIB)
+
 ifneq ($(MODEL),csm_share)
   $(OBJS):  $(CSMSHARELIB)
+else
+  complib: install_lib
 endif
+
+install_lib: $(COMPLIB)
+	$(CP) -p $(COMPLIB) $(CSMSHARELIB)
+	$(CP) -p *.$(MOD_SUFFIX) *.h $(INCLUDE_DIR)
+
 
 $(EXEC_SE): $(OBJS) $(ULIBDEP) $(CSMSHARELIB) $(MCTLIBS) $(PIOLIB) $(GPTLLIB)
 	$(LD) -o $(EXEC_SE) $(OBJS) $(CLIBS) $(ULIBS) $(SLIBS) $(MLIBS) $(LDFLAGS)
 
-ifdef INCLUDE_DIR
-  $(COMPLIB): $(OBJS)
+$(COMPLIB): $(OBJS)
 	$(AR) -r $(COMPLIB) $(OBJS)
-	$(CP) *.$(MOD_SUFFIX) *.h $(INCLUDE_DIR)
-else
-  $(COMPLIB): $(OBJS)
-	$(AR) -r $(COMPLIB) $(OBJS)
-endif
 
 .c.o:
 	$(CC) -c $(INCLDIR) $(INCS) $(CFLAGS)  $<

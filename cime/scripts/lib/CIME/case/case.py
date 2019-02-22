@@ -71,7 +71,7 @@ class Case(object):
     from CIME.case.case_test  import case_test
     from CIME.case.case_submit import check_DA_settings, check_case, submit
     from CIME.case.case_st_archive import case_st_archive, restore_from_archive, \
-        archive_last_restarts, test_st_archive
+        archive_last_restarts, test_st_archive, test_env_archive
     from CIME.case.case_run import case_run
     from CIME.case.case_cmpgen_namelists import case_cmpgen_namelists
     from CIME.case.check_lockedfiles import check_lockedfile, check_lockedfiles, check_pelayouts_require_rebuild
@@ -123,6 +123,7 @@ class Case(object):
         self.spare_nodes = None
         self.tasks_per_numa = None
         self.cores_per_task = None
+        self.srun_binding = None
 
         # check if case has been configured and if so initialize derived
         if self.get_value("CASEROOT") is not None:
@@ -177,6 +178,8 @@ class Case(object):
         self.cores_per_task = self.thread_count / threads_per_core
 
         os.environ["OMP_NUM_THREADS"] = str(self.thread_count)
+
+        self.srun_binding = smt_factor*max_mpitasks_per_node / self.tasks_per_node
 
     # Define __enter__ and __exit__ so that we can use this as a context manager
     # and force a flush on exit.
@@ -755,7 +758,7 @@ class Case(object):
                   multi_driver=False, ninst=1, test=False,
                   walltime=None, queue=None, output_root=None,
                   run_unsupported=False, answer=None,
-                  input_dir=None, driver=None):
+                  input_dir=None, driver=None, non_local=False):
 
         expect(check_name(compset_name, additional_chars='.'), "Invalid compset name {}".format(compset_name))
 
@@ -880,22 +883,29 @@ class Case(object):
         self.set_value("REALUSER", os.environ["USER"])
 
         # Set project id
-        if project is None:
-            project = get_project(machobj)
         if project is not None:
             self.set_value("PROJECT", project)
-        elif machobj.get_value("PROJECT_REQUIRED"):
-            expect(project is not None, "PROJECT_REQUIRED is true but no project found")
-        # Get charge_account id if it exists
-        charge_account = get_charge_account(machobj)
-        if charge_account is not None:
-            self.set_value("CHARGE_ACCOUNT", charge_account)
+            self.set_value("CHARGE_ACCOUNT", project)
+        else:
+            project = get_project(machobj)
+            if project is not None:
+                self.set_value("PROJECT", project)
+            elif machobj.get_value("PROJECT_REQUIRED"):
+                expect(project is not None, "PROJECT_REQUIRED is true but no project found")
+            # Get charge_account id if it exists
+            charge_account = get_charge_account(machobj)
+            if charge_account is not None:
+                self.set_value("CHARGE_ACCOUNT", charge_account)
 
         # Resolve the CIME_OUTPUT_ROOT variable, other than this
         # we don't want to resolve variables until we need them
         if output_root is None:
             output_root = self.get_value("CIME_OUTPUT_ROOT")
         self.set_value("CIME_OUTPUT_ROOT", output_root)
+        if non_local:
+            self.set_value("EXEROOT", os.path.join(output_root, self.get_value("CASE"), "bld"))
+            self.set_value("RUNDIR", os.path.join(output_root, self.get_value("CASE"), "run"))
+            self.set_value("NONLOCAL", True)
 
         # Overwriting an existing exeroot or rundir can cause problems
         exeroot = self.get_value("EXEROOT")
@@ -1040,6 +1050,16 @@ class Case(object):
                 safe_copy(os.path.join(machines_dir, "syslog.{}".format(machine)), os.path.join(casetools, "mach_syslog"))
             else:
                 safe_copy(os.path.join(machines_dir, "syslog.noop"), os.path.join(casetools, "mach_syslog"))
+
+        # add archive_metadata to the CASEROOT but only for CESM
+        if get_model() == "cesm":
+            try:
+                exefile = os.path.join(toolsdir, "archive_metadata")
+                destfile = os.path.join(self._caseroot,os.path.basename(exefile))
+                os.symlink(exefile, destfile)
+            except Exception as e:
+                logger.warning("FAILED to set up exefiles: {}".format(str(e)))
+
 
     def _create_caseroot_sourcemods(self):
         components = self.get_compset_components()
@@ -1412,7 +1432,7 @@ directory, NOT in this subdirectory."""
                multi_driver=False, ninst=1, test=False,
                walltime=None, queue=None, output_root=None,
                run_unsupported=False, answer=None,
-               input_dir=None, driver=None):
+               input_dir=None, driver=None, non_local=False):
         try:
             # Set values for env_case.xml
             self.set_lookup_value("CASE", os.path.basename(casename))
@@ -1428,7 +1448,7 @@ directory, NOT in this subdirectory."""
                            walltime=walltime, queue=queue,
                            output_root=output_root,
                            run_unsupported=run_unsupported, answer=answer,
-                           input_dir=input_dir, driver=driver)
+                           input_dir=input_dir, driver=driver, non_local=non_local)
 
             self.create_caseroot()
 

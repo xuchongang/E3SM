@@ -13,7 +13,7 @@ program prim_main
   use thread_mod,       only: nthreads, hthreads, vthreads, omp_get_thread_num, &
                               omp_set_num_threads, omp_get_nested, &
                               omp_get_num_threads, omp_get_max_threads
-  use time_mod,         only: tstep, nendstep, timelevel_t, TimeLevel_init
+  use time_mod,         only: tstep, nendstep, timelevel_t, TimeLevel_init, nstep=>nextOutputStep
   use dimensions_mod,   only: nelemd, qsize
   use control_mod,      only: restartfreq, vfile_mid, vfile_int, runtype, integration, statefreq, tstep_type
   use domain_mod,       only: domain1d_t, decompose
@@ -49,7 +49,6 @@ program prim_main
   integer nets,nete
   integer ithr
   integer ierr
-  integer nstep
   
   character (len=20) :: numproc_char
   character (len=20) :: numtrac_char
@@ -66,7 +65,7 @@ program prim_main
   ! =====================================
   if(par%masterproc) print *,"Primitive Equation Init1..."
   call t_initf('input.nl',LogPrint=par%masterproc, &
-	Mpicom=par%comm, MasterTask=par%masterproc)
+               Mpicom=par%comm, MasterTask=par%masterproc)
   call t_startf('Total')
   call t_startf('prim_init1')
   call prim_init1(elem,  par,dom_mt,tl)
@@ -221,7 +220,7 @@ program prim_main
      nstep = nextoutputstep(tl)
      do while(tl%nstep<nstep)
         call t_startf('prim_run')
-        call prim_run_subcycle(elem, hybrid,nets,nete, tstep, tl, hvcoord,1)
+        call prim_run_subcycle(elem, hybrid,nets,nete, tstep, .false., tl, hvcoord,1)
         call t_stopf('prim_run')
      end do
 #if (defined HORIZ_OPENMP)
@@ -242,7 +241,7 @@ program prim_main
      if((restartfreq > 0) .and. (MODULO(tl%nstep,restartfreq) ==0)) then 
         call WriteRestart(elem, ithr,1,nelemd,tl)
      endif
-  end do
+  end do !end of while tl%nstep < nEndStep
   call t_stopf('prim_main_loop')
 
   if(par%masterproc) print *,"Finished main timestepping loop",tl%nstep

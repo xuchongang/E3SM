@@ -409,7 +409,7 @@ def run_cmd(cmd, input_str=None, from_dir=None, verbose=None,
         arg_stderr = _convert_to_fd(arg_stdout, from_dir)
 
     if (verbose != False and (verbose or logger.isEnabledFor(logging.DEBUG))):
-        logger.info("RUN: {}".format(cmd))
+        logger.info("RUN: {}\nFROM: {}".format(cmd, os.getcwd() if from_dir is None else from_dir))
 
     if (input_str is not None):
         stdin = subprocess.PIPE
@@ -1352,6 +1352,35 @@ def does_file_have_string(filepath, text):
     """
     return os.path.isfile(filepath) and text in open(filepath).read()
 
+
+def is_last_process_complete(filepath, expect_text, fail_text ):
+    """
+    Search the filepath in reverse order looking for expect_text
+    before finding fail_text.
+    """
+    complete = False
+    fh = open(filepath, 'r')
+    fb = fh.readlines()
+
+    rfb = ''.join(reversed(fb))
+
+    findex = re.search(fail_text, rfb)
+    if findex is None:
+        findex = 0
+    else:
+        findex = findex.start()
+
+    eindex = re.search(expect_text, rfb)
+    if eindex is None:
+        eindex = 0
+    else:
+        eindex = eindex.start()
+
+    if findex > eindex:
+        complete = True
+
+    return complete
+
 def transform_vars(text, case=None, subgroup=None, overrides=None, default=None):
     """
     Do the variable substitution for any variables that need transforms
@@ -1727,3 +1756,7 @@ def run_bld_cmd_ensure_logging(cmd, arg_logger, from_dir=None):
 
 def get_batch_script_for_job(job):
     return job if "st_archive" in job else "." + job
+
+def model_log(model, arg_logger, msg):
+    if get_model() == model:
+        arg_logger.info(msg)
