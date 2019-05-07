@@ -12,6 +12,7 @@ module SoilStateType
   use ncdio_pio       , only : ncd_pio_openfile, ncd_inqfdims, ncd_pio_closefile, ncd_inqdid, ncd_inqdlen
   use clm_varpar      , only : more_vertlayers, numpft, numrad 
   use clm_varpar      , only : nlevsoi, nlevgrnd, nlevlak, nlevsoifl, nlayer, nlayert, nlevurb, nlevsno
+  use clm_varpar      , only : nfloodingtimes
   use landunit_varcon , only : istice, istdlak, istwet, istsoil, istcrop, istice_mec
   use column_varcon   , only : icol_roof, icol_sunwall, icol_shadewall, icol_road_perv, icol_road_imperv 
   use clm_varcon      , only : zsoi, dzsoi, zisoi, spval
@@ -39,6 +40,7 @@ module SoilStateType
      real(r8), pointer :: cellsand_col         (:,:) ! sand value for gridcell containing column (1:nlevsoi)
      real(r8), pointer :: cellclay_col         (:,:) ! clay value for gridcell containing column (1:nlevsoi)
      real(r8), pointer :: bd_col               (:,:) ! col bulk density of dry soil material [kg/m^3] (CN)
+    
 
      ! hydraulic properties
      real(r8), pointer :: hksat_col            (:,:) ! col hydraulic conductivity at saturation (mm H2O /s) 
@@ -78,6 +80,13 @@ module SoilStateType
      real(r8), pointer :: rootr_road_perv_col  (:,:) ! col effective fraction of roots in each soil layer of urban pervious road
      real(r8), pointer :: rootfr_road_perv_col (:,:) ! col effective fraction of roots in each soil layer of urban pervious road
      real(r8), pointer :: root_depth_patch     (:)   ! rooting depth of each PFT (m)
+     
+     !flooding
+     integer,  pointer :: floodingstatus_col   (:)   ! if the column will be flooded or not (0=not flooded, 1=flooded)
+     real(r8), pointer :: floodingtime_col     (:,:) ! flooding time of the day (seconds)
+     real(r8), pointer :: floodingrate_col     (:,:) ! flooding rate (mm/seconds)
+     real(r8), pointer :: floodingduration_col (:,:) ! flooding duration (seconds)
+
 
    contains
 
@@ -171,6 +180,12 @@ contains
     allocate(this%rootfr_col           (begc:endc,1:nlevgrnd))          ; this%rootfr_col           (:,:) = nan 
     allocate(this%rootfr_road_perv_col (begc:endc,1:nlevgrnd))          ; this%rootfr_road_perv_col (:,:) = nan
     allocate(this%root_depth_patch     (begp:endp))                     ; this%root_depth_patch     (:)   = spval
+    
+    allocate(this%floodingstatus_col    (begc:endc))                    ; this%floodingstatus_col   (:) = 0 
+    allocate(this%floodingtime_col      (begc:endc,nfloodingtimes))     ; this%floodingtime_col     (:,:) = nan 
+    allocate(this%floodingrate_col      (begc:endc,nfloodingtimes))     ; this%floodingrate_col     (:,:) = nan
+    allocate(this%floodingduration_col  (begc:endc,nfloodingtimes))     ; this%floodingduration_col (:,:) = nan 
+
 
   end subroutine InitAllocate
 
@@ -315,7 +330,7 @@ contains
     type(bounds_type), intent(in) :: bounds  
     !
                                                         ! !LOCAL VARIABLES:
-    integer            :: p, lev, c, l, g, j            ! indices
+    integer            :: p, lev, c, l, g, j, f         ! indices
     real(r8)           :: om_frac                       ! organic matter fraction
     real(r8)           :: om_tkm         = 0.25_r8      ! thermal conductivity of organic soil (Farouki, 1986) [W/m/K]
     real(r8)           :: om_watsat_lake = 0.9_r8       ! porosity of organic soil
@@ -352,6 +367,10 @@ contains
     real(r8) ,pointer  :: sand3d (:,:)                  ! read in - soil texture: percent sand (needs to be a pointer for use in ncdio)
     real(r8) ,pointer  :: clay3d (:,:)                  ! read in - soil texture: percent clay (needs to be a pointer for use in ncdio)
     real(r8) ,pointer  :: organic3d (:,:)               ! read in - organic matter: kg/m3 (needs to be a pointer for use in ncdio)
+    integer  ,pointer  :: floodingstatus2d (:)          ! read in - flooding status (0=no flooding; 1-flooded) (needs to be a pointer for use in ncdio)
+    real(r8) ,pointer  :: floodingtime3d (:,:)          ! read in - time of the day to flood (seconds) (needs to be a pointer for use in ncdio)
+    real(r8) ,pointer  :: floodingrate3d (:,:)          ! read in - rate of flooding (mm/seconds) (needs to be a pointer for use in ncdio)
+    real(r8) ,pointer  :: floodingduration3d (:,:)      ! read in - duration of flooding (seconds) (needs to be a pointer for use in ncdio)
     character(len=256) :: locfn                         ! local filename
     integer            :: nlevbed                       ! # of layers above bedrock
     integer            :: ipedof  
@@ -408,6 +427,10 @@ contains
 
     allocate(sand3d(begg:endg,nlevsoifl))
     allocate(clay3d(begg:endg,nlevsoifl))
+    allocate (floodingstatus2d(begg:endg))
+    allocate (floodingtime3d(begg:endg,nfloodingtimes))
+    allocate (floodingrate3d(begg:endg,nfloodingtimes))
+    allocate (floodingduration3d(begg:endg,nfloodingtimes))
 
     ! --------------------------------------------------------------------
     ! Read surface dataset
@@ -466,6 +489,28 @@ contains
        this%sandfrac_patch(p) = sand3d(g,1)/100.0_r8
        this%clayfrac_patch(p) = clay3d(g,1)/100.0_r8
     end do
+    
+    !read the flooding configuration
+    call ncd_io(ncid=ncid, varname='FLOODING_STATUS', flag='read', data=floodingstatus2d, dim1name=grlnd, readvar=readvar)
+    if (.not. readvar) then
+       call endrun(msg=' ERROR: FLOODING_STATUS NOT on surfdata file'//errMsg(__FILE__, __LINE__)) 
+    end if
+    
+    call ncd_io(ncid=ncid, varname='FLOODING_TIME', flag='read', data=floodingtime3d, dim1name=grlnd, readvar=readvar)
+    if (.not. readvar) then
+       call endrun(msg=' ERROR: FLOODING_TIME NOT on surfdata file'//errMsg(__FILE__, __LINE__)) 
+    end if
+    
+    call ncd_io(ncid=ncid, varname='FLOODING_RATE', flag='read', data=floodingrate3d, dim1name=grlnd, readvar=readvar)
+    if (.not. readvar) then
+       call endrun(msg=' ERROR: FLOODING_RATE NOT on surfdata file'//errMsg(__FILE__, __LINE__)) 
+    end if
+    
+    call ncd_io(ncid=ncid, varname='FLOODING_DURATION', flag='read', data=floodingduration3d, dim1name=grlnd, readvar=readvar)
+    if (.not. readvar) then 
+       call endrun(msg=' ERROR: FLOODING_DURATION NOT on surfdata file'//errMsg(__FILE__, __LINE__)) 
+    end if   
+   
 
     ! Read fmax
 
@@ -519,7 +564,15 @@ contains
     do c = bounds%begc, bounds%endc
        g = col_pp%gridcell(c)
        l = col_pp%landunit(c)
-
+        
+       this%floodingstatus_col(c)=floodingstatus2d(g)
+       
+       do f = 1, nfloodingtimes
+         this%floodingtime_col(c,f) = floodingtime3d(g, f)
+	 this%floodingrate_col(c,f) = floodingrate3d(g, f)  
+	 this%floodingduration_col(c,f) = floodingduration3d(g, f)     
+       end do
+       
        if (lun_pp%itype(l)==istwet .or. lun_pp%itype(l)==istice .or. lun_pp%itype(l)==istice_mec) then
 
           do lev = 1,nlevgrnd
