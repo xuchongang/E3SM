@@ -25,7 +25,7 @@ module CanopyHydrologyMod
   use WaterstateType  , only : waterstate_type
   use TopounitType    , only : top_as, top_af ! Atmospheric state and flux variables
   use ColumnType      , only : col_pp                
-  use VegetationType       , only : veg_pp                
+  use VegetationType  , only : veg_pp                
   !
   ! !PUBLIC TYPES:
   implicit none
@@ -211,6 +211,7 @@ contains
           swe_old              => waterstate_vars%swe_old_col              , & ! Output: [real(r8) (:,:) ]  snow water before update              
 
           irrig_rate           => waterflux_vars%irrig_rate_patch          , & ! Input:  [real(r8) (:)   ]  current irrigation rate (applied if n_irrig_steps_left > 0) [mm/s]
+          flooding_rate        => waterflux_vars%flooding_rate_col         , & ! Input:  [real(r8) (:)   ]  current flooding rate (applied if n_irrig_steps_left > 0) [mm/s]
           n_irrig_steps_left   => waterflux_vars%n_irrig_steps_left_patch  , & ! Output: [integer  (:)   ]  number of time steps for which we still need to irrigate today
           qflx_floodc          => waterflux_vars%qflx_floodc_col           , & ! Output: [real(r8) (:)   ]  column flux of flood water from RTM     
           qflx_snow_melt       => waterflux_vars%qflx_snow_melt_col        , & ! Output: [real(r8) (:)   ]  snow melt from previous time step       
@@ -374,13 +375,13 @@ contains
           g = cgridcell(c)
           if (ctype(c) /= icol_sunwall .and. ctype(c) /= icol_shadewall) then      
              qflx_floodc(c) = qflx_floodg(g)
+	     qflx_floodc(c) = qflx_floodc(c) + flooding_rate(c) !this adds the user-specified flooding input
           else
              qflx_floodc(c) = 0._r8
           endif
        enddo
-
+       
        ! Determine snow height and snow water
-
        do f = 1, num_nolakec
           c = filter_nolakec(f)
           l = clandunit(c)
