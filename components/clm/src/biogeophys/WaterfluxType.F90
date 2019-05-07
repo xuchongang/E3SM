@@ -76,7 +76,7 @@ module WaterfluxType
      real(r8), pointer :: qflx_snow_h2osfc_col     (:)   ! col snow falling on surface water
      real(r8), pointer :: qflx_drain_perched_col   (:)   ! col sub-surface runoff from perched wt (mm H2O /s)
      real(r8), pointer :: qflx_deficit_col         (:)   ! col water deficit to keep non-negative liquid water content (mm H2O)   
-     real(r8), pointer :: qflx_floodc_col          (:)   ! col flood water flux at column level
+     !real(r8), pointer :: qflx_floodc_col          (:)   ! col flood water flux at column level
      real(r8), pointer :: qflx_sl_top_soil_col     (:)   ! col liquid water + ice from layer above soil to top soil layer or sent to qflx_qrgwl (mm H2O/s)
      real(r8), pointer :: qflx_snomelt_col         (:)   ! col snow melt (mm H2O /s)
      real(r8), pointer :: qflx_snow_melt_col       (:)   ! col snow melt (net)
@@ -108,6 +108,10 @@ module WaterfluxType
      real(r8), pointer :: qflx_irrig_col           (:)   ! col irrigation flux (mm H2O/s)
      real(r8), pointer :: irrig_rate_patch         (:)   ! current irrigation rate [mm/s]
      integer , pointer :: n_irrig_steps_left_patch (:)   ! number of time steps for which we still need to irrigate today (if 0, ignore)
+
+     ! flooding
+     real(r8), pointer :: flooding_rate_col        (:)   ! current flooding rate [mm/s]
+     real(r8), pointer :: qflx_floodc_col          (:)   ! col flood water flux at column level
 
      ! For VSFM
      real(r8), pointer :: mflx_infl_col_1d         (:)   ! infiltration source in top soil control volume (kg H2O /s)
@@ -231,7 +235,7 @@ contains
     allocate(this%qflx_drain_vr_col        (begc:endc,1:nlevgrnd))   ; this%qflx_drain_vr_col        (:,:) = nan
     allocate(this%qflx_adv_col             (begc:endc,0:nlevgrnd))   ; this%qflx_adv_col             (:,:) = nan
     allocate(this%qflx_rootsoi_col         (begc:endc,1:nlevgrnd))   ; this%qflx_rootsoi_col         (:,:) = nan
-    allocate(this%qflx_rootsoi_frac_patch  (begp:endp,1:nlevgrnd))    ; this%qflx_rootsoi_frac_patch  (:,:) = nan 
+    allocate(this%qflx_rootsoi_frac_patch  (begp:endp,1:nlevgrnd))   ; this%qflx_rootsoi_frac_patch  (:,:) = nan 
     allocate(this%qflx_infl_col            (begc:endc))              ; this%qflx_infl_col            (:)   = nan
     allocate(this%qflx_surf_col            (begc:endc))              ; this%qflx_surf_col            (:)   = nan
     allocate(this%qflx_totdrain_col        (begc:endc))              ; this%qflx_totdrain_col        (:)   = nan
@@ -266,6 +270,8 @@ contains
     allocate(this%qflx_irrig_col           (begc:endc))              ; this%qflx_irrig_col           (:)   = nan
     allocate(this%irrig_rate_patch         (begp:endp))              ; this%irrig_rate_patch         (:)   = nan
     allocate(this%n_irrig_steps_left_patch (begp:endp))              ; this%n_irrig_steps_left_patch (:)   = 0
+
+    allocate(this%flooding_rate_col        (begc:endc))              ; this%flooding_rate_col        (:)   = 0._r8
 
     allocate(this%qflx_snow2topsoi_col     (begc:endc))              ; this%qflx_snow2topsoi_col     (:)   = nan
     allocate(this%qflx_h2osfc2topsoi_col   (begc:endc))              ; this%qflx_h2osfc2topsoi_col   (:)   = nan
