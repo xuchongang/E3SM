@@ -14,7 +14,7 @@ module CanopyFluxesMod
   use shr_log_mod           , only : errMsg => shr_log_errMsg
   use abortutils            , only : endrun
   use clm_varctl            , only : iulog, use_cn, use_lch4, use_c13, use_c14, use_cndv, use_fates
-  use clm_varpar            , only : nlevgrnd, nlevsno
+  use clm_varpar            , only : nlevgrnd, nlevsno, nfloodingtimes
   use clm_varcon            , only : namep 
   use pftvarcon             , only : nbrdlf_dcd_tmp_shrub, nsoybean , nsoybeanirrig
   use decompMod             , only : bounds_type
@@ -274,6 +274,10 @@ contains
     integer  :: fporig(bounds%endp-bounds%begp+1)    ! temporary filter
     integer  :: fnold                                ! temporary copy of pft count
     integer  :: f                                    ! filter index
+    integer  :: fldi                                 ! flooding index
+    integer  :: flooding_start_time_i                ! flooding start time index
+    integer  :: flooding_duration_i                  ! flooding duration index
+    integer  :: flooding_rate_i                      ! flooding rate index
     logical  :: found                                ! error flag for canopy above forcing hgt
     integer  :: index                                ! patch index for error
     real(r8) :: egvf                                 ! effective green vegetation fraction
@@ -301,7 +305,9 @@ contains
     integer  :: time                                     ! time at start of time step (seconds after 0Z)
     integer  :: local_time                               ! local time at start of time step (seconds after solar midnight)
     integer  :: seconds_since_irrig_start_time
+    !integer  :: seconds_since_flooding_start_time       ! this variable is not used!!!
     integer  :: irrig_nsteps_per_day                     ! number of time steps per day in which we irrigate
+    !integer  :: flooding_nsteps_per_day                  ! this variable is not used!!!
     logical  :: check_for_irrig(bounds%begp:bounds%endp) ! where do we need to check soil moisture to see if we need to irrigate?
     logical  :: frozen_soil(bounds%begp:bounds%endp)     ! set to true if we have encountered a frozen soil layer
     real(r8) :: vol_liq_so                               ! partial volume of liquid water in layer for which smp_node = smpso
@@ -359,6 +365,12 @@ contains
          watdry               => soilstate_vars%watdry_col                 , & ! Input:  [real(r8) (:,:) ]  btran parameter for btran=0                      (constant)                                        
          watopt               => soilstate_vars%watopt_col                 , & ! Input:  [real(r8) (:,:) ]  btran parameter for btran=1                      (constant)                                      
          eff_porosity         => soilstate_vars%eff_porosity_col           , & ! Output: [real(r8) (:,:) ]  effective soil porosity
+	 
+	 floodingstatus       => soilstate_vars%floodingstatus_col         , & ! Input:  [real(r8) (:) ]    the flooding status of the soil column (0=not flooded; 1=flooded)                     
+	 floodingrate         => soilstate_vars%floodingrate_col           , & ! Input:  [real(r8) (:,:) ]  the flooding rate of the soil column (mm/s)                     
+	 floodingduration     => soilstate_vars%floodingduration_col       , & ! Input:  [real(r8) (:,:) ]  the flooding duration of the soil column (seconds)                     
+	 floodingtime         => soilstate_vars%floodingtime_col           , & ! Input:  [real(r8) (:,:) ]  the flooding time of day for the soil column (seconds)                     
+
 
          sucsat               => soilstate_vars%sucsat_col                 , & ! Input:  [real(r8) (:,:) ]  minimum soil suction (mm)                        (constant)                                        
          bsw                  => soilstate_vars%bsw_col                    , & ! Input:  [real(r8) (:,:) ]  Clapp and Hornberger "b"                         (constant)                                        
@@ -407,7 +419,8 @@ contains
          rhaf                 => waterstate_vars%rh_af_patch               , & ! Output: [real(r8) (:)   ]  fractional humidity of canopy air [dimensionless]                     
 
          n_irrig_steps_left   => waterflux_vars%n_irrig_steps_left_patch   , & ! Output: [integer  (:)   ]  number of time steps for which we still need to irrigate today              
-         irrig_rate           => waterflux_vars%irrig_rate_patch           , & ! Output: [real(r8) (:)   ]  current irrigation rate [mm/s]                                        
+         irrig_rate           => waterflux_vars%irrig_rate_patch           , & ! Output: [real(r8) (:)   ]  current irrigation rate [mm/s]     
+         flooding_rate        => waterflux_vars%flooding_rate_col          , & ! Output: [real(r8) (:)   ]  current flooding rate [mm/s]    
          qflx_tran_veg        => waterflux_vars%qflx_tran_veg_patch        , & ! Output: [real(r8) (:)   ]  vegetation transpiration (mm H2O/s) (+ = to atm)                      
          qflx_evap_veg        => waterflux_vars%qflx_evap_veg_patch        , & ! Output: [real(r8) (:)   ]  vegetation evaporation (mm H2O/s) (+ = to atm)                        
          qflx_evap_soi        => waterflux_vars%qflx_evap_soi_patch        , & ! Output: [real(r8) (:)   ]  soil evaporation (mm H2O/s) (+ = to atm)                              
@@ -652,6 +665,43 @@ contains
             end if     ! if (check_for_irrig(p) .and. .not. frozen_soil(p))
          end do        ! do f
       end do           ! do j
+      
+      
+      !detemine if there is flooding for soil column
+      do c = bounds%begc, bounds%endc
+	 
+         if ( floodingstatus(c)==1 ) then
+            ! see if it's the right time of day to start irrigating:
+            local_time = modulo(time + nint(grc_pp%londeg(g)/degpsec), isecspday)
+	    do fldi = 1, nfloodingtimes	    
+               flooding_start_time_i = floodingtime(c, fldi)
+	       flooding_duration_i = floodingduration(c, fldi)
+	       flooding_rate_i = floodingrate(c, fldi)
+	       ! if local_time is in the flooding time range, then vegetation get flooded
+	       if (local_time >=  (flooding_start_time_i - dtime) .and. &
+	           local_time < flooding_start_time_i + flooding_duration_i) then
+		   ! if only part of dtime within the flooding time range, 
+		   !    then vegetation get flooded proportionally
+		   ! Two cases for proportional flooding
+		   ! 1st case: in the starting time, by dtime, local_time jumps into the flooding time range
+		   if (local_time < flooding_start_time_i) then
+		       flooding_rate(c) = flooding_rate_i * &
+		                          (local_time + dtime - flooding_start_time_i) / dtime
+		   ! 2nd case: in the ending time, by dtime, local_time jumps off the flooding time range
+		   else if (local_time + dtime > flooding_start_time_i + flooding_duration_i) then
+		            flooding_rate(c) = flooding_rate_i * &
+		                          (flooding_start_time_i + flooding_duration_i - local_time) / dtime
+		   ! After the two cases, vegetation get flooded fully			  
+		   else 
+		        flooding_rate(c) = flooding_rate_i 
+		   end if ! end the full or proportional flooding			      
+	        end if ! end the flooding time range     
+	    end do
+         else  ! if not flooded
+	    flooding_rate(c) = 0._r8  
+         end if ! end the flooding status 
+         
+      end do
 
       ! Modify aerodynamic parameters for sparse/dense canopy (X. Zeng)
       do f = 1, fn
