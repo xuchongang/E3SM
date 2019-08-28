@@ -26,15 +26,23 @@ See the options for `create_newcase  <../Tools_user/create_newcase.html>`_ in th
 
 The only required arguments to `create_newcase  <../Tools_user/create_newcase.html>`_ are::
 
-  > create_newcase --case [CASE] --compset [COMPSET] --res [GRID]
+  > create_newcase --case CASENAME --compset COMPSET --res GRID
 
 Creating a CIME experiment or *case* requires, at a minimum, specifying a compset and a model grid and a case directory.
 CIME supports out-of-the-box *component sets*, *model grids* and *hardware platforms* (machines).
 
 .. warning::
-   The [CASE] argument must be a string and may not contain any of the following special characters
+   The ``--case`` argument must be a string and may not contain any of the following special characters
    ::
-      > + * ? < > / { } [ ] ~ ` @ :
+      > + * ? < > { } [ ] ~ ` @ :
+
+The ``--case`` argument is used to define the name of your case, a very important piece of
+metadata that will be used in filenames, internal metadata and directory paths. The
+``CASEROOT`` is a directory create_newcase will create with the same name as the
+``CASENAME``. If ``CASENAME`` is simply a name (not a path), ``CASEROOT`` is created in
+the directory where you execute create_newcase. If ``CASENAME`` is a relative or absolute
+path, ``CASEROOT`` is created there, and the name of the case will be the last component
+of the path.
 
 ======================================
 Results of calling **create_newcase**
@@ -49,7 +57,8 @@ Here, $CIMEROOT is the full pathname of the root directory of the CIME distribut
 In the example, the command creates a ``$CASEROOT`` directory: ``~/cime/example1``.
 If that directory already exists, a warning is printed and the command aborts.
 
-In the argument to ``--case``, the directory path is ignored and only the string after the last backslash is used as the [CASE].
+In the argument to ``--case``, the case name is taken from the string after the last slash
+--- so here the case name is ``example1``.
 
 The output from create_newcase includes information such as.
 
@@ -178,3 +187,26 @@ CIME locks your ``$CASEROOT`` files according to the following rules:
 - Variables in **env_run.xml**, **env_batch.xml** and **env_archive.xml** are never locked, and most can be changed at any time.
 
 - There are some exceptions in the **env_batch.xml** file.
+
+===================================
+Adding a --user-mods-dir argument to **create_newcase**
+===================================
+
+A user may want to customize a target case with a combination of
+``user_nl_xxx`` file modifications and/or ``SourceMods`` for some
+components and/or **xmlchange** commands. As an example, the user
+might want to carry out a series of experiments based on a common set
+of changes to the namelists, source code and/or case xml settings.
+Rather than make these changes each time a new experimental
+``CASEROOT`` is generated, the user can create a directory on local
+disk with a set of changes that will be applied to each case.
+
+As an example, the directory could contain the following files: ::
+
+  > user_nl_cpl
+  > shell_commands  (this would contain ./xmlchange commands)
+  > SourceMods/src.cam/dyncomp.F90
+
+When the user calls **create_newcase** with the ``--user-mods-dir`` pointing to the
+full pathname of the directory containing these changes, then the ``CASEROOT`` will be
+created with these changes applied.

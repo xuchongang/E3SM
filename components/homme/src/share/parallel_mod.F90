@@ -6,8 +6,11 @@ module parallel_mod
   use kinds, only : real_kind, int_kind, iulog
   ! ---------------------------
   use dimensions_mod, only : nmpi_per_node, nlev, qsize_d
+!
+! Revisions:
+! 2018/10: M. Taylor adding MPI tasks per node subcommunicator
 
-
+!
   implicit none
 
   public 
@@ -24,6 +27,10 @@ module parallel_mod
   logical,      public            :: PartitionForNodes
   integer,      public :: MPIreal_t,MPIinteger_t,MPIChar_t,MPILogical_t
   integer,      public :: iam
+
+#ifdef _MPI
+  integer, public            :: MPI2real_t
+#endif
 
   integer,      public, allocatable    :: status(:,:)
   integer,      public, allocatable    :: Rrequest(:)
@@ -45,8 +52,11 @@ module parallel_mod
     integer :: root                       ! local root
     integer :: nprocs                     ! number of processes in group
     integer :: comm                       ! local communicator
+!    integer :: node_comm                  ! local communicator of all procs per node
+!    integer :: node_rank                  ! local rank in node_comm
+!    integer :: node_nprocs                ! local rank in node_comm
     logical :: masterproc                
-    logical :: dynproc                    ! Designation of a dynamics processor - AaronDonahue
+    logical :: dynproc                    ! Designation of a dynamics processor
   end type
 
 #ifdef CAM
@@ -112,7 +122,7 @@ contains
 
 #include <mpif.h>
 
-    integer(kind=int_kind)                              :: ierr,tmp
+    integer(kind=int_kind)                              :: ierr,tmp_min,tmp_max
     integer(kind=int_kind)                              :: FrameNumber
     logical :: running   ! state of MPI at beginning of initmp call
     character(len=MPI_MAX_PROCESSOR_NAME)               :: my_name
@@ -120,6 +130,7 @@ contains
 
     integer(kind=int_kind),allocatable                  :: tarray(:)
     integer(kind=int_kind)                              :: namelen,i
+    integer :: node_color
 #ifdef CAM
     integer :: color = 1
     integer :: iam_cam, npes_cam
@@ -173,6 +184,12 @@ contains
     else
        MPIreal_t    = MPI_REAL8
     endif
+
+    ! this type is only to use mpi_minloc and mpi_maxloc in print_state()
+    ! on a machine where MPIreal_t != MPI_DOUBLE_PRECISION there will be
+    ! truncation in calls with maxloc, minloc and loss of reproducibility
+    MPI2real_t   = MPI_2DOUBLE_PRECISION
+
     MPIinteger_t = MPI_INTEGER
     MPIchar_t    = MPI_CHARACTER 
     MPILogical_t = MPI_LOGICAL
@@ -199,26 +216,37 @@ contains
     ! ======================================================================
     !   Calculate how many other MPI processes are on my node 
     ! ======================================================================
+    node_color=0
     nmpi_per_node = 0
     do i=1,par%nprocs
       if( TRIM(ADJUSTL(my_name)) .eq. TRIM(ADJUSTL(the_names(i)))   ) then 
         nmpi_per_node = nmpi_per_node + 1
+        if (node_color==0) node_color=i
       endif
     enddo
+    if (node_color==0) call abortmp("initmp: Errror computing procs per node")
+
+    ! create a communicator of all procs per node
+    ! currently not used, so commenting out
+!    call mpi_comm_split(par%comm, node_color, par%rank, par%node_comm, ierr)
+!    call MPI_comm_rank(par%node_comm,par%node_rank,ierr)
+!    call MPI_comm_size(par%node_comm,par%node_nprocs,ierr)
 
     ! =======================================================================
     !  Verify that everybody agrees on this number otherwise do not do 
     !  the multi-level partitioning
     ! =======================================================================
-    call MPI_Allreduce(nmpi_per_node,tmp,1,MPIinteger_t,MPI_BAND,par%comm,ierr)
-    if(tmp .ne. nmpi_per_node) then 
+    call MPI_Allreduce(nmpi_per_node,tmp_min,1,MPIinteger_t,MPI_MIN,par%comm,ierr)
+    call MPI_Allreduce(nmpi_per_node,tmp_max,1,MPIinteger_t,MPI_MAX,par%comm,ierr)
+    if (par%masterproc) write(iulog,*)'number of MPI processes per node: min,max=',&
+         tmp_min,tmp_max
+    if(tmp_min .ne. tmp_max) then 
       if (par%masterproc) write(iulog,*)'initmp:  disagrement accross nodes for nmpi_per_node'
       nmpi_per_node = 1
       PartitionForNodes=.FALSE.
     else
       PartitionForNodes=.TRUE.
     endif
-
 
 
     deallocate(the_names)
@@ -319,6 +347,31 @@ end subroutine haltmp
     endif
 #endif
   end subroutine syncmp
+
+! =====================================
+! syncmp_comm:
+! 
+! same as above, but allow user to specify communicator
+!
+! =====================================
+  subroutine syncmp_comm(comm)
+
+    integer :: comm
+
+#ifdef _MPI
+#include <mpif.h>
+    integer                         :: errorcode,errorlen,ierr
+    character(len=MPI_MAX_ERROR_STRING)               :: errorstring
+
+    call MPI_barrier(comm,ierr)
+
+    if(ierr.eq.MPI_ERROR) then
+      errorcode=ierr
+      call MPI_Error_String(errorcode,errorstring,errorlen,ierr)
+      call abortmp(errorstring)
+    endif
+#endif
+  end subroutine syncmp_comm
 
   ! =============================================
   ! pmin_1d:

@@ -34,10 +34,10 @@ contains
                            MeshCubeEdgeCount
     ! --------------------------------
     use cube_mod, only : cube_init_atomic, set_corner_coordinates, &
-         assign_node_numbers_to_elem, set_area_correction_map2
+        set_area_correction_map2
 
     ! --------------------------------
-    use edge_mod, only : initedgebuffer
+    use edge_mod, only : initedgebuffer, edge_g
     use edgetype_mod, only : EdgeDescriptor_t, edgebuffer_t
     ! --------------------------------
     use reduction_mod, only : reductionbuffer_ordered_1d_t, red_min, red_flops, red_timer, &
@@ -282,7 +282,7 @@ contains
           do ie=1,nelemd
              call set_corner_coordinates(elem(ie))
           enddo
-          call assign_node_numbers_to_elem(elem, GridVertex)
+          !call assign_node_numbers_to_elem(elem, GridVertex)
        endif
 
        do ie=1,nelemd
@@ -338,6 +338,7 @@ contains
     ! =================================================================
     ! Initialize shared boundary_exchange and reduction buffers
     ! =================================================================
+    call initEdgeBuffer(par,edge_g,elem,max(2,nlev))
     call initEdgeBuffer(par,edge1,elem,nlev)
     call initEdgeBuffer(par,edge2,elem,2*nlev)
     call initEdgeBuffer(par,edge3,elem,11*nlev)

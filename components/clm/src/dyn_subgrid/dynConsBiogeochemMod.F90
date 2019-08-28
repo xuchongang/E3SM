@@ -1,47 +1,75 @@
 module dynConsBiogeochemMod
 
+#include "shr_assert.h"
+
   !---------------------------------------------------------------------------
   !
   ! !DESCRIPTION:
   ! Handle conservation of biogeochemical quantities (C & N) with dynamic land cover.
   !
   ! !USES:
-  use shr_kind_mod        , only : r8 => shr_kind_r8
-  use shr_log_mod         , only : errMsg => shr_log_errMsg
-  use decompMod           , only : bounds_type
-  use abortutils          , only : endrun
-  use clm_varctl          , only : iulog, use_c13, use_c14
-  use VegetationPropertiesType      , only : veg_vp
-  use CanopyStateType     , only : canopystate_type
-  use PhotosynthesisType  , only : photosyns_type
-  use CNStateType         , only : cnstate_type
-  use CNCarbonFluxType    , only : carbonflux_type
-  use CNCarbonStateType   , only : carbonstate_type
-  use CNNitrogenFluxType  , only : nitrogenflux_type
-  use CNNitrogenStateType , only : nitrogenstate_type
-  use PhosphorusFluxType  , only : phosphorusflux_type
-  use PhosphorusStateType , only : phosphorusstate_type
-  use LandunitType        , only : lun_pp                
-  use ColumnType          , only : col_pp                
-  use VegetationType           , only : veg_pp                
+  use shr_kind_mod             , only : r8 => shr_kind_r8
+  use shr_log_mod              , only : errMsg => shr_log_errMsg
+  use decompMod                , only : bounds_type
+  use abortutils               , only : endrun
+  use clm_varctl               , only : iulog, use_c13, use_c14
+  use VegetationPropertiesType , only : veg_vp
+  use CanopyStateType          , only : canopystate_type
+  use PhotosynthesisType       , only : photosyns_type
+  use CNStateType              , only : cnstate_type
+  use CNCarbonFluxType         , only : carbonflux_type
+  use CNCarbonStateType        , only : carbonstate_type
+  use CNNitrogenFluxType       , only : nitrogenflux_type
+  use CNNitrogenStateType      , only : nitrogenstate_type
+  use PhosphorusFluxType       , only : phosphorusflux_type
+  use PhosphorusStateType      , only : phosphorusstate_type
+  use GridcellDataType         , only : grc_cf, c13_grc_cf, c14_grc_cf
+  use GridcellDataType         , only : grc_nf, grc_pf
+  use LandunitType             , only : lun_pp                
+  use ColumnType               , only : col_pp  
+  use ColumnDataType           , only : column_carbon_state, column_nitrogen_state
+  use ColumnDataType           , only : column_phosphorus_state
+  use ColumnDataType           , only : col_cf, c13_col_cf, c14_col_cf  
+  use ColumnDataType           , only : col_nf, col_pf  
+  use VegetationType           , only : veg_pp
+  use VegetationDataType       , only : vegetation_carbon_state, vegetation_carbon_flux 
+  use VegetationDataType       , only : vegetation_nitrogen_state 
+  use VegetationDataType       , only : vegetation_phosphorus_state 
+  use VegetationDataType       , only : veg_cf, c13_veg_cf, c14_veg_cf  
+  use VegetationDataType       , only : veg_nf, veg_pf  
+  use clm_varcon               , only : c3_r2, c4_r2, c14ratio
+  use dynPatchStateUpdaterMod  , only : patch_state_updater_type
+  use dynSubgridAdjustmentsMod , only : dyn_veg_cs_Adjustments, dyn_col_cs_Adjustments
+  use dynSubgridAdjustmentsMod , only : dyn_veg_ns_Adjustments, dyn_col_ns_Adjustments
+  use dynSubgridAdjustmentsMod , only : dyn_veg_ps_Adjustments, dyn_col_ps_Adjustments
+  
+
   !
   ! !PUBLIC MEMBER FUNCTIONS:
   implicit none
   private
+
   save
   
   public :: dyn_cnbal_patch
+  public :: dyn_cnbal_column
   !-----------------------------------------------------------------------
 
 contains
 
   !-----------------------------------------------------------------------
-  subroutine dyn_cnbal_patch(bounds, prior_weights, &
+  subroutine dyn_cnbal_patch(bounds, &
+       num_soilp_with_inactive, filter_soilp_with_inactive, &
+       num_soilc_with_inactive, filter_soilc_with_inactive, &
+       prior_weights, &
+       patch_state_updater, &
        canopystate_vars, photosyns_vars, cnstate_vars, &
-       carbonstate_vars, c13_carbonstate_vars, c14_carbonstate_vars, &
+       veg_cs, c13_veg_cs, c14_veg_cs, &
        carbonflux_vars, c13_carbonflux_vars, c14_carbonflux_vars, &
        nitrogenstate_vars, nitrogenflux_vars, &
-       phosphorusstate_vars,phosphorusflux_vars)
+       veg_ns, &
+       phosphorusstate_vars,phosphorusflux_vars, &
+       veg_ps)
     !
     ! !DESCRIPTION:
     ! Modify pft-level state and flux variables to maintain carbon and nitrogen balance with
@@ -57,22 +85,28 @@ contains
     use dynPriorWeightsMod , only : prior_weights_type
     !
     ! !ARGUMENTS:
-    type(bounds_type)        , intent(in)    :: bounds        
-    type(prior_weights_type) , intent(in)    :: prior_weights ! weights prior to the subgrid weight updates
-    type(canopystate_type)   , intent(inout) :: canopystate_vars
-    type(photosyns_type)     , intent(inout) :: photosyns_vars
-    type(cnstate_type)       , intent(inout) :: cnstate_vars
-    type(carbonstate_type)   , intent(inout) :: carbonstate_vars
-    type(carbonstate_type)   , intent(inout) :: c13_carbonstate_vars
-    type(carbonstate_type)   , intent(inout) :: c14_carbonstate_vars
-    type(carbonflux_type)    , intent(inout) :: carbonflux_vars
-    type(carbonflux_type)    , intent(inout) :: c13_carbonflux_vars
-    type(carbonflux_type)    , intent(inout) :: c14_carbonflux_vars
-    type(nitrogenstate_type) , intent(inout) :: nitrogenstate_vars
-    type(nitrogenflux_type)  , intent(inout) :: nitrogenflux_vars
-
-    type(phosphorusstate_type) , intent(inout) :: phosphorusstate_vars
-    type(phosphorusflux_type)  , intent(inout) :: phosphorusflux_vars
+    type(bounds_type)              , intent(in)    :: bounds        
+    integer                        , intent(in)    :: num_soilp_with_inactive ! number of points in filter
+    integer                        , intent(in)    :: filter_soilp_with_inactive(:) ! soil patch filter that includes inactive points
+    integer                        , intent(in)    :: num_soilc_with_inactive ! number of points in filter
+    integer                        , intent(in)    :: filter_soilc_with_inactive(:) ! soil column filter that includes inactive points
+    type(prior_weights_type)       , intent(in)    :: prior_weights ! weights prior to the subgrid weight updates
+    type(patch_state_updater_type) , intent(in)    :: patch_state_updater
+    type(canopystate_type)         , intent(inout) :: canopystate_vars
+    type(photosyns_type)           , intent(inout) :: photosyns_vars
+    type(cnstate_type)             , intent(inout) :: cnstate_vars
+    type(vegetation_carbon_state)  , intent(inout) :: veg_cs
+    type(vegetation_carbon_state)  , intent(inout) :: c13_veg_cs
+    type(vegetation_carbon_state)  , intent(inout) :: c14_veg_cs
+    type(carbonflux_type)          , intent(inout) :: carbonflux_vars
+    type(carbonflux_type)          , intent(inout) :: c13_carbonflux_vars
+    type(carbonflux_type)          , intent(inout) :: c14_carbonflux_vars
+    type(nitrogenstate_type)       , intent(inout) :: nitrogenstate_vars
+    type(nitrogenflux_type)        , intent(inout) :: nitrogenflux_vars
+    type(vegetation_nitrogen_state), intent(inout) :: veg_ns
+    type(phosphorusstate_type)     , intent(inout) :: phosphorusstate_vars
+    type(phosphorusflux_type)      , intent(inout) :: phosphorusflux_vars
+    type(vegetation_phosphorus_state),intent(inout) :: veg_ps
     !
     ! !LOCAL VARIABLES:
     integer                       :: pi,p,c,l,g,j                  ! indices
@@ -95,9 +129,11 @@ contains
     real(r8), allocatable         :: conv_cflux(:)                 ! pft-level mass loss due to weight shift
     real(r8), allocatable         :: prod10_cflux(:)               ! pft-level mass loss due to weight shift
     real(r8), allocatable         :: prod100_cflux(:)              ! pft-level mass loss due to weight shift
+    real(r8), allocatable         :: crop_product_cflux(:)         ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: conv_nflux(:)                 ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod10_nflux(:)               ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod100_nflux(:)              ! pft-level mass loss due to weight shift
+    real(r8), allocatable         :: crop_product_nflux(:)         ! pft-level mass loss due to weight shift
     real(r8)                      :: t1,t2,wt_new,wt_old
     real(r8)                      :: init_state, change_state, new_state
     real(r8)                      :: tot_leaf, pleaf, pstor, pxfer
@@ -116,10 +152,9 @@ contains
     real(r8), allocatable, target :: conv_pflux(:)                 ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod10_pflux(:)               ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod100_pflux(:)              ! pft-level mass loss due to weight shift
+    real(r8), allocatable         :: crop_product_pflux(:)         ! pft-level mass loss due to weight shift
     real(r8)                      :: leafp_seed
     real(r8)                      :: deadstemp_seed, ppool_seed
-
-
 
     !! C13
     real(r8), allocatable         :: dwt_leafc13_seed(:)           ! pft-level mass gain due to seeding of new area
@@ -130,12 +165,7 @@ contains
     real(r8), allocatable, target :: conv_c13flux(:)               ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod10_c13flux(:)             ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod100_c13flux(:)            ! pft-level mass loss due to weight shift
-    real(r8)                      :: c3_del13c                     ! typical del13C for C3 photosynthesis (permil, relative to PDB)
-    real(r8)                      :: c4_del13c                     ! typical del13C for C4 photosynthesis (permil, relative to PDB)
-    real(r8)                      :: c3_r1_c13                     ! isotope ratio (13c/12c) for C3 photosynthesis
-    real(r8)                      :: c4_r1_c13                     ! isotope ratio (13c/12c) for C4 photosynthesis
-    real(r8)                      :: c3_r2_c13                     ! isotope ratio (13c/[12c+13c]) for C3 photosynthesis
-    real(r8)                      :: c4_r2_c13                     ! isotope ratio (13c/[12c+13c]) for C4 photosynthesis
+    real(r8), allocatable         :: crop_product_c13flux(:)       ! pft-level mass loss due to weight shift
     real(r8)                      :: leafc13_seed, deadstemc13_seed
     !! C14
     real(r8), allocatable         :: dwt_leafc14_seed(:)           ! pft-level mass gain due to seeding of new area
@@ -146,246 +176,80 @@ contains
     real(r8), allocatable, target :: conv_c14flux(:)               ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod10_c14flux(:)             ! pft-level mass loss due to weight shift
     real(r8), allocatable, target :: prod100_c14flux(:)            ! pft-level mass loss due to weight shift
-    real(r8)                      :: c3_del14c                     ! typical del14C for C3 photosynthesis (permil, relative to PDB)
-    real(r8)                      :: c4_del14c                     ! typical del14C for C4 photosynthesis (permil, relative to PDB)
-    real(r8)                      :: c3_r1_c14                     ! isotope ratio (14c/12c) for C3 photosynthesis
-    real(r8)                      :: c4_r1_c14                     ! isotope ratio (14c/12c) for C4 photosynthesis
-    real(r8)                      :: c3_r2_c14                     ! isotope ratio (14c/[12c+14c]) for C3 photosynthesis
-    real(r8)                      :: c4_r2_c14                     ! isotope ratio (14c/[12c+14c]) for C4 photosynthesis
+    real(r8), allocatable         :: crop_product_c14flux(:)       ! pft-level mass loss due to weight shift
     real(r8)                      :: leafc14_seed, deadstemc14_seed
+    real(r8) :: froot, croot
+    real(r8) :: fr_flab, fr_fcel, fr_flig
     !-----------------------------------------------------------------------
     
     associate(&
-         cs      => carbonstate_vars,    &
-         c13_cs => c13_carbonstate_vars, &
-         c14_cs => c14_carbonstate_vars, &
+         cs     => veg_cs    , &
+         c13_cs => c13_veg_cs, &
+         c14_cs => c14_veg_cs, &
          cf     => carbonflux_vars     , &
          c13_cf => c13_carbonflux_vars , &
          c14_cf => c14_carbonflux_vars , &
-         ns     => nitrogenstate_vars  , &
+         ns     => veg_ns  , &
          nf     => nitrogenflux_vars   ,  &
-         ps     => phosphorusstate_vars  , &
+         ps     => veg_ps  , &
          pf     => phosphorusflux_vars     &
          )
 
 
     ! Allocate pft-level mass loss arrays
-    allocate(dwt_leafc_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_leafc_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_leafn_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_leafn_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_deadstemc_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadstemc_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_deadstemn_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadstemn_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_npool_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_npool_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_frootc_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_frootc_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_livecrootc_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_livecrootc_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_deadcrootc_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadcrootc_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_frootn_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_frootn_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_livecrootn_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_livecrootn_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_deadcrootn_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadcrootn_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(conv_cflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for conv_cflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(prod10_cflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod10_cflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(prod100_cflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod100_cflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(conv_nflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for conv_nflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(prod10_nflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod10_nflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(prod100_nflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod100_nflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
+    allocate(dwt_leafc_seed           (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_leafn_seed           (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_deadstemc_seed       (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_deadstemn_seed       (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_npool_seed           (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_frootc_to_litter     (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_livecrootc_to_litter (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_deadcrootc_to_litter (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_frootn_to_litter     (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_livecrootn_to_litter (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_deadcrootn_to_litter (bounds%begp:bounds%endp), stat=ier)
+    allocate(conv_cflux               (bounds%begp:bounds%endp), stat=ier)
+    allocate(prod10_cflux             (bounds%begp:bounds%endp), stat=ier)
+    allocate(prod100_cflux            (bounds%begp:bounds%endp), stat=ier)
+    allocate(crop_product_cflux       (bounds%begp:bounds%endp), stat=ier)
+    allocate(conv_nflux               (bounds%begp:bounds%endp), stat=ier)
+    allocate(prod10_nflux             (bounds%begp:bounds%endp), stat=ier)
+    allocate(prod100_nflux            (bounds%begp:bounds%endp), stat=ier)
+    allocate(crop_product_nflux       (bounds%begp:bounds%endp), stat=ier)
 
     ! Allocate P arrays
-    allocate(dwt_leafp_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_leafp_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_deadstemp_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadstemp_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_ppool_seed(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_ppool_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_frootp_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_frootp_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_livecrootp_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_livecrootp_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(dwt_deadcrootp_to_litter(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadcrootp_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(conv_pflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for conv_pflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(prod10_pflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod10_pflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
-    allocate(prod100_pflux(bounds%begp:bounds%endp), stat=ier)
-    if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod100_pflux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-    end if
+    allocate(dwt_leafp_seed           (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_deadstemp_seed       (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_ppool_seed           (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_frootp_to_litter     (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_livecrootp_to_litter (bounds%begp:bounds%endp), stat=ier)
+    allocate(dwt_deadcrootp_to_litter (bounds%begp:bounds%endp), stat=ier)
+    allocate(conv_pflux               (bounds%begp:bounds%endp), stat=ier)
+    allocate(prod10_pflux             (bounds%begp:bounds%endp), stat=ier)
+    allocate(prod100_pflux            (bounds%begp:bounds%endp), stat=ier)
+    allocate(crop_product_pflux       (bounds%begp:bounds%endp), stat=ier)
 
     if ( use_c13 ) then
-       allocate(dwt_leafc13_seed(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_leafc13_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_deadstemc13_seed(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadstemc13_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_frootc13_to_litter(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_frootc13_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_livecrootc13_to_litter(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_livecrootc13_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_deadcrootc13_to_litter(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadcrootc13_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(conv_c13flux(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for conv_c13flux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(prod10_c13flux(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod10_c13flux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(prod100_c13flux(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod100_c13flux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
+       allocate(dwt_leafc13_seed           (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_deadstemc13_seed       (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_frootc13_to_litter     (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_livecrootc13_to_litter (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_deadcrootc13_to_litter (bounds%begp:bounds%endp), stat=ier)
+       allocate(conv_c13flux               (bounds%begp:bounds%endp), stat=ier)
+       allocate(prod10_c13flux             (bounds%begp:bounds%endp), stat=ier)
+       allocate(prod100_c13flux            (bounds%begp:bounds%endp), stat=ier)
+       allocate(crop_product_c13flux       (bounds%begp:bounds%endp), stat=ier)
     endif
     if ( use_c14 ) then
-       allocate(dwt_leafc14_seed(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_leafc14_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_deadstemc14_seed(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadstemc14_seed'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_frootc14_to_litter(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_frootc14_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_livecrootc14_to_litter(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_livecrootc14_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(dwt_deadcrootc14_to_litter(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for dwt_deadcrootc14_to_litter'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(conv_c14flux(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for conv_c14flux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(prod10_c14flux(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod10_c14flux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
-       allocate(prod100_c14flux(bounds%begp:bounds%endp), stat=ier)
-       if (ier /= 0) then
-          write(iulog,*)subname,' allocation error for prod100_c14flux'
-          call endrun(msg=errMsg(__FILE__, __LINE__))
-       end if
+       allocate(dwt_leafc14_seed           (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_deadstemc14_seed       (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_frootc14_to_litter     (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_livecrootc14_to_litter (bounds%begp:bounds%endp), stat=ier)
+       allocate(dwt_deadcrootc14_to_litter (bounds%begp:bounds%endp), stat=ier)
+       allocate(conv_c14flux               (bounds%begp:bounds%endp), stat=ier)
+       allocate(prod10_c14flux             (bounds%begp:bounds%endp), stat=ier)
+       allocate(prod100_c14flux            (bounds%begp:bounds%endp), stat=ier)
+       allocate(crop_product_c14flux       (bounds%begp:bounds%endp), stat=ier)
     endif
     
     ! Get time step
@@ -394,54 +258,60 @@ contains
     do p = bounds%begp,bounds%endp
        c = veg_pp%column(p)
        ! initialize all the pft-level local flux arrays
-       dwt_leafc_seed(p) = 0._r8
-       dwt_leafn_seed(p) = 0._r8
-       dwt_deadstemc_seed(p) = 0._r8
-       dwt_deadstemn_seed(p) = 0._r8
-       dwt_npool_seed(p) = 0._r8
-       dwt_frootc_to_litter(p) = 0._r8
+       dwt_leafc_seed(p)           = 0._r8
+       dwt_deadstemc_seed(p)       = 0._r8
+       dwt_frootc_to_litter(p)     = 0._r8
        dwt_livecrootc_to_litter(p) = 0._r8
        dwt_deadcrootc_to_litter(p) = 0._r8
-       dwt_frootn_to_litter(p) = 0._r8
+       conv_cflux(p)               = 0._r8
+       prod10_cflux(p)             = 0._r8
+       prod100_cflux(p)            = 0._r8
+       crop_product_cflux(p)       = 0._r8
+       
+       dwt_leafn_seed(p)           = 0._r8
+       dwt_deadstemn_seed(p)       = 0._r8
+       dwt_npool_seed(p)           = 0._r8
+       dwt_frootn_to_litter(p)     = 0._r8
        dwt_livecrootn_to_litter(p) = 0._r8
        dwt_deadcrootn_to_litter(p) = 0._r8
-       conv_cflux(p) = 0._r8
-       prod10_cflux(p) = 0._r8
-       prod100_cflux(p) = 0._r8
-       conv_nflux(p) = 0._r8
-       prod10_nflux(p) = 0._r8
-       prod100_nflux(p) = 0._r8
+       conv_nflux(p)               = 0._r8
+       prod10_nflux(p)             = 0._r8
+       prod100_nflux(p)            = 0._r8
+       crop_product_nflux(p)       = 0._r8
        
-       dwt_leafp_seed(p) = 0._r8
-       dwt_deadstemp_seed(p) = 0._r8
-       dwt_ppool_seed(p) = 0._r8
-       dwt_frootp_to_litter(p) = 0._r8
+       dwt_leafp_seed(p)           = 0._r8
+       dwt_deadstemp_seed(p)       = 0._r8
+       dwt_ppool_seed(p)           = 0._r8
+       dwt_frootp_to_litter(p)     = 0._r8
        dwt_livecrootp_to_litter(p) = 0._r8
        dwt_deadcrootp_to_litter(p) = 0._r8
-       conv_pflux(p) = 0._r8
-       prod10_pflux(p) = 0._r8
-       prod100_pflux(p) = 0._r8
+       conv_pflux(p)               = 0._r8
+       prod10_pflux(p)             = 0._r8
+       prod100_pflux(p)            = 0._r8
+       crop_product_pflux(p)       = 0._r8
 
        if ( use_c13 ) then
-          dwt_leafc13_seed(p) = 0._r8
-          dwt_deadstemc13_seed(p) = 0._r8
-          dwt_frootc13_to_litter(p) = 0._r8
+          dwt_leafc13_seed(p)           = 0._r8
+          dwt_deadstemc13_seed(p)       = 0._r8
+          dwt_frootc13_to_litter(p)     = 0._r8
           dwt_livecrootc13_to_litter(p) = 0._r8
           dwt_deadcrootc13_to_litter(p) = 0._r8
-          conv_c13flux(p) = 0._r8
-          prod10_c13flux(p) = 0._r8
-          prod100_c13flux(p) = 0._r8
+          conv_c13flux(p)               = 0._r8
+          prod10_c13flux(p)             = 0._r8
+          prod100_c13flux(p)            = 0._r8
+          crop_product_c13flux(p)       = 0._r8
        endif
        
        if ( use_c14 ) then
-          dwt_leafc14_seed(p) = 0._r8
-          dwt_deadstemc14_seed(p) = 0._r8
-          dwt_frootc14_to_litter(p) = 0._r8
+          dwt_leafc14_seed(p)           = 0._r8
+          dwt_deadstemc14_seed(p)       = 0._r8
+          dwt_frootc14_to_litter(p)     = 0._r8
           dwt_livecrootc14_to_litter(p) = 0._r8
           dwt_deadcrootc14_to_litter(p) = 0._r8
-          conv_c14flux(p) = 0._r8
-          prod10_c14flux(p) = 0._r8
-          prod100_c14flux(p) = 0._r8
+          conv_c14flux(p)               = 0._r8
+          prod10_c14flux(p)             = 0._r8
+          prod100_c14flux(p)            = 0._r8
+          crop_product_c14flux(p)       = 0._r8
        endif
        
        l = veg_pp%landunit(p)
@@ -462,2224 +332,375 @@ contains
                 ! in this time step.  Based on the settings in cnIniTimeVar.
                 
                 ! pft-level carbon state variables
-                cs%leafc_patch(p)              = 0._r8
-                cs%leafc_storage_patch(p)      = 0._r8
-                cs%leafc_xfer_patch(p)         = 0._r8
-                cs%frootc_patch(p)             = 0._r8
-                cs%frootc_storage_patch(p)     = 0._r8
-                cs%frootc_xfer_patch(p)        = 0._r8
-                cs%livestemc_patch(p)          = 0._r8
-                cs%livestemc_storage_patch(p)  = 0._r8
-                cs%livestemc_xfer_patch(p)     = 0._r8
-                cs%deadstemc_patch(p)          = 0._r8
-                cs%deadstemc_storage_patch(p)  = 0._r8
-                cs%deadstemc_xfer_patch(p)     = 0._r8
-                cs%livecrootc_patch(p)         = 0._r8
-                cs%livecrootc_storage_patch(p) = 0._r8
-                cs%livecrootc_xfer_patch(p)    = 0._r8
-                cs%deadcrootc_patch(p)         = 0._r8
-                cs%deadcrootc_storage_patch(p) = 0._r8
-                cs%deadcrootc_xfer_patch(p)    = 0._r8
-                cs%gresp_storage_patch(p)      = 0._r8
-                cs%gresp_xfer_patch(p)         = 0._r8
-                cs%cpool_patch(p)              = 0._r8
-                cs%xsmrpool_patch(p)           = 0._r8
-                cs%ctrunc_patch(p)             = 0._r8
-                cs%dispvegc_patch(p)           = 0._r8
-                cs%storvegc_patch(p)           = 0._r8
-                cs%totvegc_patch(p)            = 0._r8
-                cs%totpftc_patch(p)            = 0._r8
+                call CarbonStateVarsInit     (cs, p)
+                call NitrogenStateVarsInit   (veg_ns, p)
+                call PhosphorusStateVarsInit (veg_ps, p)
+                call CanopyStateVarsInit     (canopystate_vars, p)
+                call CNStateVarsInit         (cnstate_vars, p, c)
+                call CarbonFluxVarsInit      (veg_cf, p)
+                call NitrogenFluxVarsInit    (nf, p)
+                call PhosphorusFluxVarsInit  (pf, p)
                 
                 if ( use_c13 ) then
-                   ! pft-level carbon-13 state variables
-                   c13_cs%leafc_patch(p)              = 0._r8
-                   c13_cs%leafc_storage_patch(p)      = 0._r8
-                   c13_cs%leafc_xfer_patch(p)         = 0._r8
-                   c13_cs%frootc_patch(p)             = 0._r8
-                   c13_cs%frootc_storage_patch(p)     = 0._r8
-                   c13_cs%frootc_xfer_patch(p)        = 0._r8
-                   c13_cs%livestemc_patch(p)          = 0._r8
-                   c13_cs%livestemc_storage_patch(p)  = 0._r8
-                   c13_cs%livestemc_xfer_patch(p)     = 0._r8
-                   c13_cs%deadstemc_patch(p)          = 0._r8
-                   c13_cs%deadstemc_storage_patch(p)  = 0._r8
-                   c13_cs%deadstemc_xfer_patch(p)     = 0._r8
-                   c13_cs%livecrootc_patch(p)         = 0._r8
-                   c13_cs%livecrootc_storage_patch(p) = 0._r8
-                   c13_cs%livecrootc_xfer_patch(p)    = 0._r8
-                   c13_cs%deadcrootc_patch(p)         = 0._r8
-                   c13_cs%deadcrootc_storage_patch(p) = 0._r8
-                   c13_cs%deadcrootc_xfer_patch(p)    = 0._r8
-                   c13_cs%gresp_storage_patch(p)      = 0._r8
-                   c13_cs%gresp_xfer_patch(p)         = 0._r8
-                   c13_cs%cpool_patch(p)              = 0._r8
-                   c13_cs%xsmrpool_patch(p)           = 0._r8
-                   c13_cs%ctrunc_patch(p)             = 0._r8
-                   c13_cs%dispvegc_patch(p)           = 0._r8
-                   c13_cs%storvegc_patch(p)           = 0._r8
-                   c13_cs%totvegc_patch(p)            = 0._r8
-                   c13_cs%totpftc_patch(p)            = 0._r8
+                   call CarbonStateVarsInit(c13_cs, p)
                 endif
                 
                 if ( use_c14 ) then
-                   ! pft-level carbon-14 state variables
-                   c14_cs%leafc_patch(p)              = 0._r8
-                   c14_cs%leafc_storage_patch(p)      = 0._r8
-                   c14_cs%leafc_xfer_patch(p)         = 0._r8
-                   c14_cs%frootc_patch(p)             = 0._r8
-                   c14_cs%frootc_storage_patch(p)     = 0._r8
-                   c14_cs%frootc_xfer_patch(p)        = 0._r8
-                   c14_cs%livestemc_patch(p)          = 0._r8
-                   c14_cs%livestemc_storage_patch(p)  = 0._r8
-                   c14_cs%livestemc_xfer_patch(p)     = 0._r8
-                   c14_cs%deadstemc_patch(p)          = 0._r8
-                   c14_cs%deadstemc_storage_patch(p)  = 0._r8
-                   c14_cs%deadstemc_xfer_patch(p)     = 0._r8
-                   c14_cs%livecrootc_patch(p)         = 0._r8
-                   c14_cs%livecrootc_storage_patch(p) = 0._r8
-                   c14_cs%livecrootc_xfer_patch(p)    = 0._r8
-                   c14_cs%deadcrootc_patch(p)         = 0._r8
-                   c14_cs%deadcrootc_storage_patch(p) = 0._r8
-                   c14_cs%deadcrootc_xfer_patch(p)    = 0._r8
-                   c14_cs%gresp_storage_patch(p)      = 0._r8
-                   c14_cs%gresp_xfer_patch(p)         = 0._r8
-                   c14_cs%cpool_patch(p)              = 0._r8
-                   c14_cs%xsmrpool_patch(p)           = 0._r8
-                   c14_cs%ctrunc_patch(p)             = 0._r8
-                   c14_cs%dispvegc_patch(p)           = 0._r8
-                   c14_cs%storvegc_patch(p)           = 0._r8
-                   c14_cs%totvegc_patch(p)            = 0._r8
-                   c14_cs%totpftc_patch(p)            = 0._r8
+                   call CarbonStateVarsInit(c14_cs, p)
                 endif
-                
-                ! pft-level nitrogen state variables
-                ns%leafn_patch(p)	       = 0._r8
-                ns%leafn_storage_patch(p)      = 0._r8
-                ns%leafn_xfer_patch(p)         = 0._r8
-                ns%frootn_patch(p)	       = 0._r8
-                ns%frootn_storage_patch(p)     = 0._r8
-                ns%frootn_xfer_patch(p)        = 0._r8
-                ns%livestemn_patch(p)          = 0._r8
-                ns%livestemn_storage_patch(p)  = 0._r8
-                ns%livestemn_xfer_patch(p)     = 0._r8
-                ns%deadstemn_patch(p)          = 0._r8
-                ns%deadstemn_storage_patch(p)  = 0._r8
-                ns%deadstemn_xfer_patch(p)     = 0._r8
-                ns%livecrootn_patch(p)         = 0._r8
-                ns%livecrootn_storage_patch(p) = 0._r8
-                ns%livecrootn_xfer_patch(p)    = 0._r8
-                ns%deadcrootn_patch(p)         = 0._r8
-                ns%deadcrootn_storage_patch(p) = 0._r8
-                ns%deadcrootn_xfer_patch(p)    = 0._r8
-                ns%retransn_patch(p)           = 0._r8
-                ns%npool_patch(p)	       = 0._r8
-                ns%ntrunc_patch(p)             = 0._r8
-                ns%dispvegn_patch(p)           = 0._r8
-                ns%storvegn_patch(p)           = 0._r8
-                ns%totvegn_patch(p)            = 0._r8
-                ns%totpftn_patch (p)           = 0._r8
-                
-                ! pft-level phosphorus state variables
-                ps%leafp_patch(p)	       = 0._r8
-                ps%leafp_storage_patch(p)      = 0._r8
-                ps%leafp_xfer_patch(p)         = 0._r8
-                ps%frootp_patch(p)	       = 0._r8
-                ps%frootp_storage_patch(p)     = 0._r8
-                ps%frootp_xfer_patch(p)        = 0._r8
-                ps%livestemp_patch(p)          = 0._r8
-                ps%livestemp_storage_patch(p)  = 0._r8
-                ps%livestemp_xfer_patch(p)     = 0._r8
-                ps%deadstemp_patch(p)          = 0._r8
-                ps%deadstemp_storage_patch(p)  = 0._r8
-                ps%deadstemp_xfer_patch(p)     = 0._r8
-                ps%livecrootp_patch(p)         = 0._r8
-                ps%livecrootp_storage_patch(p) = 0._r8
-                ps%livecrootp_xfer_patch(p)    = 0._r8
-                ps%deadcrootp_patch(p)         = 0._r8
-                ps%deadcrootp_storage_patch(p) = 0._r8
-                ps%deadcrootp_xfer_patch(p)    = 0._r8
-                ps%retransp_patch(p)           = 0._r8
-                ps%ppool_patch(p)	       = 0._r8
-                ps%ptrunc_patch(p)             = 0._r8
-                ps%dispvegp_patch(p)           = 0._r8
-                ps%storvegp_patch(p)           = 0._r8
-                ps%totvegp_patch(p)            = 0._r8
-                ps%totpftp_patch (p)           = 0._r8
-
-                ! initialize same flux and epv variables that are set
-                canopystate_vars%laisun_patch(p) = 0._r8
-                canopystate_vars%laisha_patch(p) = 0._r8
-                
-                cnstate_vars%dormant_flag_patch(p)          = 1._r8
-                cnstate_vars%days_active_patch(p)           = 0._r8
-                cnstate_vars%onset_flag_patch(p)            = 0._r8
-                cnstate_vars%onset_counter_patch(p)         = 0._r8
-                cnstate_vars%onset_gddflag_patch(p)         = 0._r8
-                cnstate_vars%onset_fdd_patch(p)             = 0._r8
-                cnstate_vars%onset_gdd_patch(p)             = 0._r8
-                cnstate_vars%onset_swi_patch(p)             = 0._r8
-                cnstate_vars%offset_flag_patch(p)           = 0._r8
-                cnstate_vars%offset_counter_patch(p)        = 0._r8
-                cnstate_vars%offset_fdd_patch(p)            = 0._r8
-                cnstate_vars%offset_swi_patch(p)            = 0._r8
-                cnstate_vars%lgsf_patch(p)                  = 0._r8
-                cnstate_vars%bglfr_patch(p)                 = 0._r8
-                cnstate_vars%bglfr_leaf_patch(p)            = 0._r8
-                cnstate_vars%bglfr_froot_patch(p)           = 0._r8
-                cnstate_vars%bgtr_patch(p)                  = 0._r8
-                cnstate_vars%annavg_t2m_patch(p)            = cnstate_vars%annavg_t2m_col(c)
-                cnstate_vars%tempavg_t2m_patch(p)           = 0._r8
-                cnstate_vars%alloc_pnow_patch(p)            = 1._r8
-                cnstate_vars%c_allometry_patch(p)           = 0._r8
-                cnstate_vars%n_allometry_patch(p)           = 0._r8
-                cnstate_vars%p_allometry_patch(p)           = 0._r8
-                cnstate_vars%tempsum_potential_gpp_patch(p) = 0._r8
-                cnstate_vars%annsum_potential_gpp_patch(p)  = 0._r8
-                cnstate_vars%tempmax_retransn_patch(p)      = 0._r8
-                cnstate_vars%annmax_retransn_patch(p)       = 0._r8
-                cnstate_vars%downreg_patch(p)               = 0._r8
- 
+                                 
                 ! add phosphorus related variables
-                cnstate_vars%tempmax_retransp_patch(p)      = 0._r8
-                cnstate_vars%annmax_retransp_patch(p)       = 0._r8
-           
-
-                cf%xsmrpool_recover_patch(p)      = 0._r8
-                cf%plant_calloc_patch(p)          = 0._r8
-                cf%excess_cflux_patch(p)          = 0._r8
-                cf%prev_leafc_to_litter_patch(p)  = 0._r8
-                cf%prev_frootc_to_litter_patch(p) = 0._r8
-                cf%availc_patch(p)                = 0._r8
-                cf%gpp_before_downreg_patch(p)    = 0._r8
-                cf%tempsum_npp_patch(p)           = 0._r8
-                cf%annsum_npp_patch(p)            = 0._r8
-
-                nf%plant_ndemand_patch(p)         = 0._r8
-                nf%avail_retransn_patch(p)        = 0._r8
-                nf%plant_nalloc_patch(p)          = 0._r8
-                 
-                ! add phosphorus related variables
-                pf%plant_pdemand_patch(p)         = 0._r8
-                pf%avail_retransp_patch(p)        = 0._r8
-                pf%plant_palloc_patch(p)          = 0._r8
-
-                if ( use_c13 ) then
-                   cf%xsmrpool_c13ratio_patch(p) = c13ratio
-                end if
-                if ( use_c14 ) then
-                   cnstate_vars%rc14_atm_patch(p) = c14ratio
-                   cnstate_vars%rc14_atm_patch(p) = 0._r8
-                endif
 
                 call photosyns_vars%NewPatchinit(p)
                 
              end if  ! end initialization of new pft
-             
-             ! (still in dwt > 0 block)
-             
-             ! set the seed sources for leaf and deadstem
-             ! leaf source is split later between leaf, leaf_storage, leaf_xfer
-             leafc_seed   = 0._r8
-             leafn_seed   = 0._r8
-             leafp_seed   = 0._r8
-             deadstemc_seed   = 0._r8
-             deadstemn_seed   = 0._r8
-             npool_seed       = 0._r8
-             ppool_seed       = 0._r8
-             deadstemp_seed   = 0._r8
-             if ( use_c13 ) then
-                leafc13_seed = 0._r8
-                deadstemc13_seed = 0._r8
-             endif
-             if ( use_c14 ) then
-                leafc14_seed = 0._r8
-                deadstemc14_seed = 0._r8
-             endif
-             if (veg_pp%itype(p) /= 0) then
-                leafc_seed = 1._r8
-                leafn_seed  = leafc_seed / veg_vp%leafcn(veg_pp%itype(p))
-                leafp_seed  = leafc_seed / veg_vp%leafcp(veg_pp%itype(p))
-                if (veg_vp%woody(veg_pp%itype(p)) == 1._r8) then
-                   deadstemc_seed = 0.1_r8
-                   deadstemn_seed = deadstemc_seed / veg_vp%deadwdcn(veg_pp%itype(p))
-                   deadstemp_seed = deadstemc_seed / veg_vp%deadwdcp(veg_pp%itype(p))
-                end if
-                if (veg_vp%nstor(veg_pp%itype(p)) > 1e-6_r8) then
-                   npool_seed     = 0.1_r8
-                   ppool_seed     = 0.01_r8
-                end if
-
-                
-                if ( use_c13 ) then
-                   ! 13c state is initialized assuming del13c = -28 permil for C3, and -13 permil for C4.
-                   ! That translates to ratios of (13c/(12c+13c)) of 0.01080455 for C3, and 0.01096945 for C4
-                   ! based on the following formulae: 
-                   ! r1 (13/12) = PDB + (del13c * PDB)/1000.0
-                   ! r2 (13/(13+12)) = r1/(1+r1)
-                   ! PDB = 0.0112372_R8  (ratio of 13C/12C in Pee Dee Belemnite, C isotope standard)
-                   c3_del13c = -28._r8
-                   c4_del13c = -13._r8
-                   c3_r1_c13 = SHR_CONST_PDB + ((c3_del13c*SHR_CONST_PDB)/1000._r8)
-                   c3_r2_c13 = c3_r1_c13/(1._r8 + c3_r1_c13)
-                   c4_r1_c13 = SHR_CONST_PDB + ((c4_del13c*SHR_CONST_PDB)/1000._r8)
-                   c4_r2_c13 = c4_r1_c13/(1._r8 + c4_r1_c13)
-                   
-                   if (veg_vp%c3psn(veg_pp%itype(p)) == 1._r8) then
-                      leafc13_seed     = leafc_seed     * c3_r2_c13
-                      deadstemc13_seed = deadstemc_seed * c3_r2_c13
-                   else
-                      leafc13_seed     = leafc_seed     * c4_r2_c13
-                      deadstemc13_seed = deadstemc_seed * c4_r2_c13
-                   end if
-                endif
-                
-                if ( use_c14 ) then
-                   ! 14c state is initialized assuming initial "modern" 14C of 1.e-12
-                   if (veg_vp%c3psn(veg_pp%itype(p)) == 1._r8) then
-                      leafc14_seed     = leafc_seed     * c14ratio
-                      deadstemc14_seed = deadstemc_seed * c14ratio
-                   else
-                      leafc14_seed     = leafc_seed     * c14ratio
-                      deadstemc14_seed = deadstemc_seed * c14ratio
-                   end if
-                endif
-             end if
-             
-             ! When PFT area expands (dwt > 0), the pft-level mass density 
-             ! is modified to conserve the original pft mass distributed
-             ! over the new (larger) area, plus a term to account for the 
-             ! introduction of new seed source for leaf and deadstem
-             t1 = prior_weights%pwtcol(p)/veg_pp%wtcol(p)
-             t2 = dwt/veg_pp%wtcol(p)
-             
-             tot_leaf = cs%leafc_patch(p) + cs%leafc_storage_patch(p) + cs%leafc_xfer_patch(p)
-             pleaf = 0._r8
-             pstor = 0._r8
-             pxfer = 0._r8
-             if (tot_leaf /= 0._r8) then
-                ! when adding seed source to non-zero leaf state, use current proportions
-                pleaf = cs%leafc_patch(p)/tot_leaf
-                pstor = cs%leafc_storage_patch(p)/tot_leaf
-                pxfer = cs%leafc_xfer_patch(p)/tot_leaf
-             else
-                ! when initiating from zero leaf state, use evergreen flag to set proportions
-                if (veg_vp%evergreen(veg_pp%itype(p)) == 1._r8) then
-                   pleaf = 1._r8
-                else
-                   pstor = 1._r8
-                end if
-             end if
-             cs%leafc_patch(p)              = cs%leafc_patch(p)              * t1 + leafc_seed*pleaf*t2
-             cs%leafc_storage_patch(p)      = cs%leafc_storage_patch(p)      * t1 + leafc_seed*pstor*t2
-             cs%leafc_xfer_patch(p)         = cs%leafc_xfer_patch(p)         * t1 + leafc_seed*pxfer*t2
-             cs%frootc_patch(p)             = cs%frootc_patch(p)             * t1
-             cs%frootc_storage_patch(p)     = cs%frootc_storage_patch(p)     * t1
-             cs%frootc_xfer_patch(p)        = cs%frootc_xfer_patch(p)        * t1
-             cs%livestemc_patch(p)          = cs%livestemc_patch(p)          * t1
-             cs%livestemc_storage_patch(p)  = cs%livestemc_storage_patch(p)  * t1
-             cs%livestemc_xfer_patch(p)     = cs%livestemc_xfer_patch(p)     * t1
-             cs%deadstemc_patch(p)          = cs%deadstemc_patch(p)          * t1  + deadstemc_seed*t2
-             cs%deadstemc_storage_patch(p)  = cs%deadstemc_storage_patch(p)  * t1
-             cs%deadstemc_xfer_patch(p)     = cs%deadstemc_xfer_patch(p)     * t1
-             cs%livecrootc_patch(p)         = cs%livecrootc_patch(p)         * t1
-             cs%livecrootc_storage_patch(p) = cs%livecrootc_storage_patch(p) * t1
-             cs%livecrootc_xfer_patch(p)    = cs%livecrootc_xfer_patch(p)    * t1
-             cs%deadcrootc_patch(p)         = cs%deadcrootc_patch(p)         * t1
-             cs%deadcrootc_storage_patch(p) = cs%deadcrootc_storage_patch(p) * t1
-             cs%deadcrootc_xfer_patch(p)    = cs%deadcrootc_xfer_patch(p)    * t1
-             cs%gresp_storage_patch(p)      = cs%gresp_storage_patch(p)      * t1
-             cs%gresp_xfer_patch(p)         = cs%gresp_xfer_patch(p)         * t1
-             cs%cpool_patch(p)              = cs%cpool_patch(p)              * t1
-             cs%xsmrpool_patch(p)           = cs%xsmrpool_patch(p)           * t1
-             cs%ctrunc_patch(p)             = cs%ctrunc_patch(p)             * t1
-             cs%dispvegc_patch(p)           = cs%dispvegc_patch(p)           * t1
-             cs%storvegc_patch(p)           = cs%storvegc_patch(p)           * t1
-             cs%totvegc_patch(p)            = cs%totvegc_patch(p)            * t1
-             cs%totpftc_patch(p)            = cs%totpftc_patch(p)            * t1
-             
-             if ( use_c13 ) then
-                ! pft-level carbon-13 state variables 
-                tot_leaf = c13_cs%leafc_patch(p) + c13_cs%leafc_storage_patch(p) + c13_cs%leafc_xfer_patch(p)
-                pleaf = 0._r8
-                pstor = 0._r8
-                pxfer = 0._r8
-                if (tot_leaf /= 0._r8) then
-                   pleaf = c13_cs%leafc_patch(p)/tot_leaf
-                   pstor = c13_cs%leafc_storage_patch(p)/tot_leaf
-                   pxfer = c13_cs%leafc_xfer_patch(p)/tot_leaf
-                else
-                   ! when initiating from zero leaf state, use evergreen flag to set proportions
-                   if (veg_vp%evergreen(veg_pp%itype(p)) == 1._r8) then
-                      pleaf = 1._r8
-                   else
-                      pstor = 1._r8
-                   end if
-                end if
-                c13_cs%leafc_patch(p)              = c13_cs%leafc_patch(p)              * t1 + leafc13_seed*pleaf*t2
-                c13_cs%leafc_storage_patch(p)      = c13_cs%leafc_storage_patch(p)      * t1 + leafc13_seed*pstor*t2
-                c13_cs%leafc_xfer_patch(p)         = c13_cs%leafc_xfer_patch(p)         * t1 + leafc13_seed*pxfer*t2
-                c13_cs%frootc_patch(p)             = c13_cs%frootc_patch(p)             * t1
-                c13_cs%frootc_storage_patch(p)     = c13_cs%frootc_storage_patch(p)     * t1
-                c13_cs%frootc_xfer_patch(p)        = c13_cs%frootc_xfer_patch(p)        * t1
-                c13_cs%livestemc_patch(p)          = c13_cs%livestemc_patch(p)          * t1
-                c13_cs%livestemc_storage_patch(p)  = c13_cs%livestemc_storage_patch(p)  * t1
-                c13_cs%livestemc_xfer_patch(p)     = c13_cs%livestemc_xfer_patch(p)     * t1
-                c13_cs%deadstemc_patch(p)          = c13_cs%deadstemc_patch(p)          * t1 + deadstemc13_seed*t2
-                c13_cs%deadstemc_storage_patch(p)  = c13_cs%deadstemc_storage_patch(p)  * t1
-                c13_cs%deadstemc_xfer_patch(p)     = c13_cs%deadstemc_xfer_patch(p)     * t1
-                c13_cs%livecrootc_patch(p)         = c13_cs%livecrootc_patch(p)         * t1
-                c13_cs%livecrootc_storage_patch(p) = c13_cs%livecrootc_storage_patch(p) * t1
-                c13_cs%livecrootc_xfer_patch(p)    = c13_cs%livecrootc_xfer_patch(p)    * t1
-                c13_cs%deadcrootc_patch(p)         = c13_cs%deadcrootc_patch(p)         * t1
-                c13_cs%deadcrootc_storage_patch(p) = c13_cs%deadcrootc_storage_patch(p) * t1
-                c13_cs%deadcrootc_xfer_patch(p)    = c13_cs%deadcrootc_xfer_patch(p)    * t1
-                c13_cs%gresp_storage_patch(p)      = c13_cs%gresp_storage_patch(p)      * t1
-                c13_cs%gresp_xfer_patch(p)         = c13_cs%gresp_xfer_patch(p)         * t1
-                c13_cs%cpool_patch(p)              = c13_cs%cpool_patch(p)              * t1
-                c13_cs%xsmrpool_patch(p)           = c13_cs%xsmrpool_patch(p)           * t1
-                c13_cs%ctrunc_patch(p)             = c13_cs%ctrunc_patch(p)             * t1
-                c13_cs%dispvegc_patch(p)           = c13_cs%dispvegc_patch(p)           * t1
-                c13_cs%storvegc_patch(p)           = c13_cs%storvegc_patch(p)           * t1
-                c13_cs%totvegc_patch(p)            = c13_cs%totvegc_patch(p)            * t1
-                c13_cs%totpftc_patch(p)            = c13_cs%totpftc_patch(p)            * t1
-                
-             endif
-             
-             if ( use_c14 ) then
-                ! pft-level carbon-14 state variables 
-                tot_leaf = c14_cs%leafc_patch(p) + c14_cs%leafc_storage_patch(p) + c14_cs%leafc_xfer_patch(p)
-                pleaf = 0._r8
-                pstor = 0._r8
-                pxfer = 0._r8
-                if (tot_leaf /= 0._r8) then
-                   pleaf = c14_cs%leafc_patch(p)/tot_leaf
-                   pstor = c14_cs%leafc_storage_patch(p)/tot_leaf
-                   pxfer = c14_cs%leafc_xfer_patch(p)/tot_leaf
-                else
-                   ! when initiating from zero leaf state, use evergreen flag to set proportions
-                   if (veg_vp%evergreen(veg_pp%itype(p)) == 1._r8) then
-                      pleaf = 1._r8
-                   else
-                      pstor = 1._r8
-                   end if
-                end if
-                c14_cs%leafc_patch(p)              = c14_cs%leafc_patch(p)              * t1 + leafc14_seed*pleaf*t2
-                c14_cs%leafc_storage_patch(p)      = c14_cs%leafc_storage_patch(p)      * t1 + leafc14_seed*pstor*t2
-                c14_cs%leafc_xfer_patch(p)         = c14_cs%leafc_xfer_patch(p)         * t1 + leafc14_seed*pxfer*t2
-                c14_cs%frootc_patch(p)             = c14_cs%frootc_patch(p)             * t1
-                c14_cs%frootc_storage_patch(p)     = c14_cs%frootc_storage_patch(p)     * t1
-                c14_cs%frootc_xfer_patch(p)        = c14_cs%frootc_xfer_patch(p)        * t1
-                c14_cs%livestemc_patch(p)          = c14_cs%livestemc_patch(p)          * t1
-                c14_cs%livestemc_storage_patch(p)  = c14_cs%livestemc_storage_patch(p)  * t1
-                c14_cs%livestemc_xfer_patch(p)     = c14_cs%livestemc_xfer_patch(p)     * t1
-                c14_cs%deadstemc_patch(p)          = c14_cs%deadstemc_patch(p)          * t1 + deadstemc14_seed*t2
-                c14_cs%deadstemc_storage_patch(p)  = c14_cs%deadstemc_storage_patch(p)  * t1
-                c14_cs%deadstemc_xfer_patch(p)     = c14_cs%deadstemc_xfer_patch(p)     * t1
-                c14_cs%livecrootc_patch(p)         = c14_cs%livecrootc_patch(p)         * t1
-                c14_cs%livecrootc_storage_patch(p) = c14_cs%livecrootc_storage_patch(p) * t1
-                c14_cs%livecrootc_xfer_patch(p)    = c14_cs%livecrootc_xfer_patch(p)    * t1
-                c14_cs%deadcrootc_patch(p)         = c14_cs%deadcrootc_patch(p)         * t1
-                c14_cs%deadcrootc_storage_patch(p) = c14_cs%deadcrootc_storage_patch(p) * t1
-                c14_cs%deadcrootc_xfer_patch(p)    = c14_cs%deadcrootc_xfer_patch(p)    * t1
-                c14_cs%gresp_storage_patch(p)      = c14_cs%gresp_storage_patch(p)      * t1
-                c14_cs%gresp_xfer_patch(p)         = c14_cs%gresp_xfer_patch(p)         * t1
-                c14_cs%cpool_patch(p)              = c14_cs%cpool_patch(p)              * t1
-                c14_cs%xsmrpool_patch(p)           = c14_cs%xsmrpool_patch(p)           * t1
-                c14_cs%ctrunc_patch(p)             = c14_cs%ctrunc_patch(p)             * t1
-                c14_cs%dispvegc_patch(p)           = c14_cs%dispvegc_patch(p)           * t1
-                c14_cs%storvegc_patch(p)           = c14_cs%storvegc_patch(p)           * t1
-                c14_cs%totvegc_patch(p)            = c14_cs%totvegc_patch(p)            * t1
-                c14_cs%totpftc_patch(p)            = c14_cs%totpftc_patch(p)            * t1
-             endif
-             
-             tot_leaf = ns%leafn_patch(p) + ns%leafn_storage_patch(p) + ns%leafn_xfer_patch(p)
-             pleaf = 0._r8
-             pstor = 0._r8
-             pxfer = 0._r8
-             if (tot_leaf /= 0._r8) then
-                pleaf = ns%leafn_patch(p)/tot_leaf
-                pstor = ns%leafn_storage_patch(p)/tot_leaf
-                pxfer = ns%leafn_xfer_patch(p)/tot_leaf
-             else
-                ! when initiating from zero leaf state, use evergreen flag to set proportions
-                if (veg_vp%evergreen(veg_pp%itype(p)) == 1._r8) then
-                   pleaf = 1._r8
-                else
-                   pstor = 1._r8
-                end if
-             end if
-             ! pft-level nitrogen state variables
-             ns%leafn_patch(p)              = ns%leafn_patch(p)              * t1 + leafn_seed*pleaf*t2
-             ns%leafn_storage_patch(p)      = ns%leafn_storage_patch(p)      * t1 + leafn_seed*pstor*t2
-             ns%leafn_xfer_patch(p)         = ns%leafn_xfer_patch(p)         * t1 + leafn_seed*pxfer*t2
-             ns%frootn_patch(p)  	    = ns%frootn_patch(p)             * t1
-             ns%frootn_storage_patch(p)     = ns%frootn_storage_patch(p)     * t1
-             ns%frootn_xfer_patch(p)        = ns%frootn_xfer_patch(p)        * t1
-             ns%livestemn_patch(p)	    = ns%livestemn_patch(p)          * t1
-             ns%livestemn_storage_patch(p)  = ns%livestemn_storage_patch(p)  * t1
-             ns%livestemn_xfer_patch(p)     = ns%livestemn_xfer_patch(p)     * t1
-             ns%deadstemn_patch(p)          = ns%deadstemn_patch(p)          * t1 + deadstemn_seed*t2
-             ns%deadstemn_storage_patch(p)  = ns%deadstemn_storage_patch(p)  * t1
-             ns%deadstemn_xfer_patch(p)     = ns%deadstemn_xfer_patch(p)     * t1
-             ns%npool_patch(p)              = ns%npool_patch(p)              * t1 + npool_seed*t2
-             ns%livecrootn_patch(p)         = ns%livecrootn_patch(p)         * t1
-             ns%livecrootn_storage_patch(p) = ns%livecrootn_storage_patch(p) * t1
-             ns%livecrootn_xfer_patch(p)    = ns%livecrootn_xfer_patch(p)    * t1
-             ns%deadcrootn_patch(p)         = ns%deadcrootn_patch(p)         * t1
-             ns%deadcrootn_storage_patch(p) = ns%deadcrootn_storage_patch(p) * t1
-             ns%deadcrootn_xfer_patch(p)    = ns%deadcrootn_xfer_patch(p)    * t1
-             ns%retransn_patch(p)	    = ns%retransn_patch(p)           * t1
-             ns%ntrunc_patch(p)             = ns%ntrunc_patch(p)             * t1
-             ns%dispvegn_patch(p)	    = ns%dispvegn_patch(p)           * t1
-             ns%storvegn_patch(p)	    = ns%storvegn_patch(p)           * t1
-             ns%totvegn_patch(p) 	    = ns%totvegn_patch(p)            * t1
-             ns%totpftn_patch(p) 	    = ns%totpftn_patch(p)            * t1
-             
-             ! add phosphorus -X.YANG
-             tot_leaf = ps%leafp_patch(p) + ps%leafp_storage_patch(p) + ps%leafp_xfer_patch(p)
-             pleaf = 0._r8
-             pstor = 0._r8
-             pxfer = 0._r8
-             if (tot_leaf /= 0._r8) then
-                pleaf = ps%leafp_patch(p)/tot_leaf
-                pstor = ps%leafp_storage_patch(p)/tot_leaf
-                pxfer = ps%leafp_xfer_patch(p)/tot_leaf
-             else
-                ! when initiating from zero leaf state, use evergreen flag to set proportions
-                if (veg_vp%evergreen(veg_pp%itype(p)) == 1._r8) then
-                   pleaf = 1._r8
-                else
-                   pstor = 1._r8
-                end if
-             end if
-             ! pft-level nitrogen state variables
-             ps%leafp_patch(p)              = ps%leafp_patch(p)              * t1 + leafp_seed*pleaf*t2
-             ps%leafp_storage_patch(p)      = ps%leafp_storage_patch(p)      * t1 + leafp_seed*pstor*t2
-             ps%leafp_xfer_patch(p)         = ps%leafp_xfer_patch(p)         * t1 + leafp_seed*pxfer*t2
-             ps%frootp_patch(p)  	    = ps%frootp_patch(p)             * t1
-             ps%frootp_storage_patch(p)     = ps%frootp_storage_patch(p)     * t1
-             ps%frootp_xfer_patch(p)        = ps%frootp_xfer_patch(p)        * t1
-             ps%livestemp_patch(p)	    = ps%livestemp_patch(p)          * t1
-             ps%livestemp_storage_patch(p)  = ps%livestemp_storage_patch(p)  * t1
-             ps%livestemp_xfer_patch(p)     = ps%livestemp_xfer_patch(p)     * t1
-             ps%deadstemp_patch(p)          = ps%deadstemp_patch(p)          * t1 + deadstemp_seed*t2
-             ps%deadstemp_storage_patch(p)  = ps%deadstemp_storage_patch(p)  * t1
-             ps%deadstemp_xfer_patch(p)     = ps%deadstemp_xfer_patch(p)     * t1
-             ps%livecrootp_patch(p)         = ps%livecrootp_patch(p)         * t1
-             ps%livecrootp_storage_patch(p) = ps%livecrootp_storage_patch(p) * t1
-             ps%livecrootp_xfer_patch(p)    = ps%livecrootp_xfer_patch(p)    * t1
-             ps%deadcrootp_patch(p)         = ps%deadcrootp_patch(p)         * t1
-             ps%deadcrootp_storage_patch(p) = ps%deadcrootp_storage_patch(p) * t1
-             ps%deadcrootp_xfer_patch(p)    = ps%deadcrootp_xfer_patch(p)    * t1
-             ps%retransp_patch(p)	    = ps%retransp_patch(p)           * t1
-             ps%ppool_patch(p)              = ps%ppool_patch(p)              * t1 + ppool_seed*t2
-             ps%ptrunc_patch(p)             = ps%ptrunc_patch(p)             * t1
-             ps%dispvegp_patch(p)	    = ps%dispvegp_patch(p)           * t1
-             ps%storvegp_patch(p)	    = ps%storvegp_patch(p)           * t1
-             ps%totvegp_patch(p) 	    = ps%totvegp_patch(p)            * t1
-             ps%totpftp_patch(p) 	    = ps%totpftp_patch(p)            * t1
-
-
-             ! update temporary seed source arrays
-             ! These are calculated in terms of the required contributions from
-             ! column-level seed source
-             dwt_leafc_seed(p)   = leafc_seed   * dwt
-             if ( use_c13 ) then
-                dwt_leafc13_seed(p) = leafc13_seed * dwt
-                dwt_deadstemc13_seed(p) = deadstemc13_seed * dwt
-             endif
-             if ( use_c14 ) then
-                dwt_leafc14_seed(p) = leafc14_seed * dwt
-                dwt_deadstemc14_seed(p) = deadstemc14_seed * dwt
-             endif
-             dwt_leafn_seed(p)   = leafn_seed   * dwt
-             dwt_deadstemc_seed(p)   = deadstemc_seed   * dwt
-             dwt_deadstemn_seed(p)   = deadstemn_seed   * dwt
-             dwt_npool_seed(p)       = npool_seed * dwt             
-
-             dwt_leafp_seed(p)   = leafp_seed   * dwt
-             dwt_deadstemp_seed(p)   = deadstemp_seed   * dwt
-             dwt_ppool_seed(p)       = ppool_seed * dwt
-          else if (dwt < 0._r8) then
-             
-             ! if the pft lost weight on the timestep, then the carbon and nitrogen state
-             ! variables are directed to litter, CWD, and wood product pools.
-             
-             ! N.B. : the conv_cflux, prod10_cflux, and prod100_cflux fluxes are accumulated
-             ! as negative values, but the fluxes for pft-to-litter are accumulated as 
-             ! positive values
-             
-             ! set local weight variables for this pft
-             wt_new = veg_pp%wtcol(p)
-             wt_old = prior_weights%pwtcol(p)
-             
-             !---------------
-             ! C state update
-             !---------------
-             
-             ! leafc 
-             ptr => cs%leafc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! leafc_storage 
-             ptr => cs%leafc_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! leafc_xfer 
-             ptr => cs%leafc_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! frootc 
-             ptr => cs%frootc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_frootc_to_litter(p) = dwt_frootc_to_litter(p) - change_state
-             else
-                ptr = 0._r8
-                dwt_frootc_to_litter(p) = dwt_frootc_to_litter(p) + init_state
-             end if
-             
-             ! frootc_storage 
-             ptr => cs%frootc_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! frootc_xfer 
-             ptr => cs%frootc_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! livestemc 
-             ptr => cs%livestemc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! livestemc_storage 
-             ptr => cs%livestemc_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! livestemc_xfer 
-             ptr => cs%livestemc_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! deadstemc 
-             ptr => cs%deadstemc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state*pconv(veg_pp%itype(p))
-                prod10_cflux(p) = prod10_cflux(p) + change_state*pprod10(veg_pp%itype(p))
-                prod100_cflux(p) = prod100_cflux(p) + change_state*pprod100(veg_pp%itype(p))
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state*pconv(veg_pp%itype(p))
-                prod10_cflux(p) = prod10_cflux(p) - init_state*pprod10(veg_pp%itype(p))
-                prod100_cflux(p) = prod100_cflux(p) - init_state*pprod100(veg_pp%itype(p))
-             end if
-             
-             ! deadstemc_storage 
-             ptr => cs%deadstemc_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! deadstemc_xfer 
-             ptr => cs%deadstemc_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! livecrootc 
-             ptr => cs%livecrootc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_livecrootc_to_litter(p) = dwt_livecrootc_to_litter(p) - change_state
-             else
-                ptr = 0._r8
-                dwt_livecrootc_to_litter(p) = dwt_livecrootc_to_litter(p) + init_state
-             end if
-             
-             ! livecrootc_storage 
-             ptr => cs%livecrootc_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! livecrootc_xfer 
-             ptr => cs%livecrootc_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! deadcrootc 
-             ptr => cs%deadcrootc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_deadcrootc_to_litter(p) = dwt_deadcrootc_to_litter(p) - change_state
-             else
-                ptr = 0._r8
-                dwt_deadcrootc_to_litter(p) = dwt_deadcrootc_to_litter(p) + init_state
-             end if
-             
-             ! deadcrootc_storage 
-             ptr => cs%deadcrootc_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! deadcrootc_xfer 
-             ptr => cs%deadcrootc_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! gresp_storage 
-             ptr => cs%gresp_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! gresp_xfer 
-             ptr => cs%gresp_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! cpool 
-             ptr => cs%cpool_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! xsmrpool 
-             ptr => cs%xsmrpool_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-             
-             ! pft_ctrunc 
-             ptr => cs%ctrunc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                conv_cflux(p) = conv_cflux(p) + change_state
-             else
-                ptr = 0._r8
-                conv_cflux(p) = conv_cflux(p) - init_state
-             end if
-
-             if ( use_c13 ) then
-                !-------------------
-                ! C13 state update
-                !-------------------
-                
-                ! set pointers to the conversion and product pool fluxes for this pft
-                ! dwt_ptr0 is reserved for local assignment to dwt_xxx_to_litter fluxes
-                dwt_ptr1 => conv_c13flux(p)
-                dwt_ptr2 => prod10_c13flux(p)
-                dwt_ptr3 => prod100_c13flux(p)
-                
-                ! leafc 
-                ptr => c13_cs%leafc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! leafc_storage 
-                ptr => c13_cs%leafc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! leafc_xfer 
-                ptr => c13_cs%leafc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! frootc 
-                ptr => c13_cs%frootc_patch(p)
-                dwt_ptr0 => dwt_frootc13_to_litter(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr0 = dwt_ptr0 - change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr0 = dwt_ptr0 + init_state
-                end if
-                
-                ! frootc_storage 
-                ptr => c13_cs%frootc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! frootc_xfer 
-                ptr => c13_cs%frootc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livestemc 
-                ptr => c13_cs%livestemc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livestemc_storage 
-                ptr => c13_cs%livestemc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livestemc_xfer 
-                ptr => c13_cs%livestemc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadstemc 
-                ptr => c13_cs%deadstemc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state*pconv(veg_pp%itype(p))
-                   dwt_ptr2 = dwt_ptr2 + change_state*pprod10(veg_pp%itype(p))
-                   dwt_ptr3 = dwt_ptr3 + change_state*pprod100(veg_pp%itype(p))
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state*pconv(veg_pp%itype(p))
-                   dwt_ptr2 = dwt_ptr2 - init_state*pprod10(veg_pp%itype(p))
-                   dwt_ptr3 = dwt_ptr3 - init_state*pprod100(veg_pp%itype(p))
-                end if
-                
-                ! deadstemc_storage 
-                ptr => c13_cs%deadstemc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadstemc_xfer 
-                ptr => c13_cs%deadstemc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livecrootc 
-                ptr => c13_cs%livecrootc_patch(p)
-                dwt_ptr0 => dwt_livecrootc13_to_litter(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr0 = dwt_ptr0 - change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr0 = dwt_ptr0 + init_state
-                end if
-                
-                ! livecrootc_storage 
-                ptr => c13_cs%livecrootc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livecrootc_xfer 
-                ptr => c13_cs%livecrootc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadcrootc 
-                ptr => c13_cs%deadcrootc_patch(p)
-                dwt_ptr0 => dwt_deadcrootc13_to_litter(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr0 = dwt_ptr0 - change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr0 = dwt_ptr0 + init_state
-                end if
-                
-                ! deadcrootc_storage 
-                ptr => c13_cs%deadcrootc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadcrootc_xfer 
-                ptr => c13_cs%deadcrootc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! gresp_storage 
-                ptr => c13_cs%gresp_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! gresp_xfer 
-                ptr => c13_cs%gresp_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! cpool 
-                ptr => c13_cs%cpool_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! pft_ctrunc 
-                ptr => c13_cs%ctrunc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-             endif
-
-             if ( use_c14 ) then
-                !-------------------
-                ! C14 state update
-                !-------------------
-                
-                ! set pointers to the conversion and product pool fluxes for this pft
-                ! dwt_ptr0 is reserved for local assignment to dwt_xxx_to_litter fluxes
-                dwt_ptr1 => conv_c14flux(p)
-                dwt_ptr2 => prod10_c14flux(p)
-                dwt_ptr3 => prod100_c14flux(p)
-                
-                ! leafc 
-                ptr => c14_cs%leafc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! leafc_storage 
-                ptr => c14_cs%leafc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! leafc_xfer 
-                ptr => c14_cs%leafc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! frootc 
-                ptr => c14_cs%frootc_patch(p)
-                dwt_ptr0 => dwt_frootc14_to_litter(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr0 = dwt_ptr0 - change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr0 = dwt_ptr0 + init_state
-                end if
-                
-                ! frootc_storage 
-                ptr => c14_cs%frootc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! frootc_xfer 
-                ptr => c14_cs%frootc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livestemc 
-                ptr => c14_cs%livestemc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livestemc_storage 
-                ptr => c14_cs%livestemc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livestemc_xfer 
-                ptr => c14_cs%livestemc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadstemc 
-                ptr => c14_cs%deadstemc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state*pconv(veg_pp%itype(p))
-                   dwt_ptr2 = dwt_ptr2 + change_state*pprod10(veg_pp%itype(p))
-                   dwt_ptr3 = dwt_ptr3 + change_state*pprod100(veg_pp%itype(p))
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state*pconv(veg_pp%itype(p))
-                   dwt_ptr2 = dwt_ptr2 - init_state*pprod10(veg_pp%itype(p))
-                   dwt_ptr3 = dwt_ptr3 - init_state*pprod100(veg_pp%itype(p))
-                end if
-                
-                ! deadstemc_storage 
-                ptr => c14_cs%deadstemc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadstemc_xfer 
-                ptr => c14_cs%deadstemc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livecrootc 
-                ptr => c14_cs%livecrootc_patch(p)
-                dwt_ptr0 => dwt_livecrootc14_to_litter(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr0 = dwt_ptr0 - change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr0 = dwt_ptr0 + init_state
-                end if
-                
-                ! livecrootc_storage 
-                ptr => c14_cs%livecrootc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! livecrootc_xfer 
-                ptr => c14_cs%livecrootc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadcrootc 
-                ptr => c14_cs%deadcrootc_patch(p)
-                dwt_ptr0 => dwt_deadcrootc14_to_litter(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr0 = dwt_ptr0 - change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr0 = dwt_ptr0 + init_state
-                end if
-                
-                ! deadcrootc_storage 
-                ptr => c14_cs%deadcrootc_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! deadcrootc_xfer 
-                ptr => c14_cs%deadcrootc_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! gresp_storage 
-                ptr => c14_cs%gresp_storage_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! gresp_xfer 
-                ptr => c14_cs%gresp_xfer_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! cpool 
-                ptr => c14_cs%cpool_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-                
-                ! pft_ctrunc 
-                ptr => c14_cs%ctrunc_patch(p)
-                init_state = ptr*wt_old
-                change_state = ptr*dwt
-                new_state = init_state+change_state
-                if (wt_new /= 0._r8) then
-                   ptr = new_state/wt_new
-                   dwt_ptr1 = dwt_ptr1 + change_state
-                else
-                   ptr = 0._r8
-                   dwt_ptr1 = dwt_ptr1 - init_state
-                end if
-             endif
-             
-             
-             !---------------
-             ! N state update
-             !---------------
-             
-             ! set pointers to the conversion and product pool fluxes for this pft
-             ! dwt_ptr0 is reserved for local assignment to dwt_xxx_to_litter fluxes
-             dwt_ptr1 => conv_nflux(p)
-             dwt_ptr2 => prod10_nflux(p)
-             dwt_ptr3 => prod100_nflux(p)
-             
-             ! leafn 
-             ptr => ns%leafn_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! leafn_storage  
-             ptr => ns%leafn_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! leafn_xfer  
-             ptr => ns%leafn_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! frootn 
-             ptr => ns%frootn_patch(p)
-             dwt_ptr0 => dwt_frootn_to_litter(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr0 = dwt_ptr0 - change_state
-             else
-                ptr = 0._r8
-                dwt_ptr0 = dwt_ptr0 + init_state
-             end if
-             
-             ! frootn_storage 
-             ptr => ns%frootn_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! frootn_xfer  
-             ptr => ns%frootn_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livestemn  
-             ptr => ns%livestemn_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livestemn_storage 
-             ptr => ns%livestemn_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livestemn_xfer 
-             ptr => ns%livestemn_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadstemn 
-             ptr => ns%deadstemn_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state*pconv(veg_pp%itype(p))
-                dwt_ptr2 = dwt_ptr2 + change_state*pprod10(veg_pp%itype(p))
-                dwt_ptr3 = dwt_ptr3 + change_state*pprod100(veg_pp%itype(p))
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state*pconv(veg_pp%itype(p))
-                dwt_ptr2 = dwt_ptr2 - init_state*pprod10(veg_pp%itype(p))
-                dwt_ptr3 = dwt_ptr3 - init_state*pprod100(veg_pp%itype(p))
-             end if
-             
-             ! deadstemn_storage 
-             ptr => ns%deadstemn_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadstemn_xfer 
-             ptr => ns%deadstemn_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livecrootn 
-             ptr => ns%livecrootn_patch(p)
-             dwt_ptr0 => dwt_livecrootn_to_litter(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr0 = dwt_ptr0 - change_state
-             else
-                ptr = 0._r8
-                dwt_ptr0 = dwt_ptr0 + init_state
-             end if
-             
-             ! livecrootn_storage  
-             ptr => ns%livecrootn_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livecrootn_xfer  
-             ptr => ns%livecrootn_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadcrootn 
-             ptr => ns%deadcrootn_patch(p)
-             dwt_ptr0 => dwt_deadcrootn_to_litter(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr0 = dwt_ptr0 - change_state
-             else
-                ptr = 0._r8
-                dwt_ptr0 = dwt_ptr0 + init_state
-             end if
-             
-             ! deadcrootn_storage  
-             ptr => ns%deadcrootn_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadcrootn_xfer  
-             ptr => ns%deadcrootn_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! retransn  
-             ptr => ns%retransn_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! npool  
-             ptr => ns%npool_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! pft_ntrunc  
-             ptr => ns%ntrunc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-
-
-             !---------------
-             ! P state update  X.YANG
-             !---------------
-             
-             ! set pointers to the conversion and product pool fluxes for this pft
-             ! dwt_ptr0 is reserved for local assignment to dwt_xxx_to_litter fluxes
-             dwt_ptr1 => conv_pflux(p)
-             dwt_ptr2 => prod10_pflux(p)
-             dwt_ptr3 => prod100_pflux(p)
-             
-             ! leafp 
-             ptr => ps%leafp_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! leafp_storage  
-             ptr => ps%leafp_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! leafp_xfer  
-             ptr => ps%leafp_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! frootp 
-             ptr => ps%frootp_patch(p)
-             dwt_ptr0 => dwt_frootp_to_litter(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr0 = dwt_ptr0 - change_state
-             else
-                ptr = 0._r8
-                dwt_ptr0 = dwt_ptr0 + init_state
-             end if
-             
-             ! frootp_storage 
-             ptr => ps%frootp_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! frootp_xfer  
-             ptr => ps%frootp_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livestemp  
-             ptr => ps%livestemp_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livestemp_storage 
-             ptr => ps%livestemp_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livestemp_xfer 
-             ptr => ps%livestemp_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadstemp 
-             ptr => ps%deadstemp_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state*pconv(veg_pp%itype(p))
-                dwt_ptr2 = dwt_ptr2 + change_state*pprod10(veg_pp%itype(p))
-                dwt_ptr3 = dwt_ptr3 + change_state*pprod100(veg_pp%itype(p))
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state*pconv(veg_pp%itype(p))
-                dwt_ptr2 = dwt_ptr2 - init_state*pprod10(veg_pp%itype(p))
-                dwt_ptr3 = dwt_ptr3 - init_state*pprod100(veg_pp%itype(p))
-             end if
-             
-             ! deadstemp_storage 
-             ptr => ps%deadstemp_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadstemp_xfer 
-             ptr => ps%deadstemp_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livecrootp 
-             ptr => ps%livecrootp_patch(p)
-             dwt_ptr0 => dwt_livecrootp_to_litter(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr0 = dwt_ptr0 - change_state
-             else
-                ptr = 0._r8
-                dwt_ptr0 = dwt_ptr0 + init_state
-             end if
-             
-             ! livecrootp_storage  
-             ptr => ps%livecrootp_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! livecrootp_xfer  
-             ptr => ps%livecrootp_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadcrootp 
-             ptr => ps%deadcrootp_patch(p)
-             dwt_ptr0 => dwt_deadcrootp_to_litter(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr0 = dwt_ptr0 - change_state
-             else
-                ptr = 0._r8
-                dwt_ptr0 = dwt_ptr0 + init_state
-             end if
-             
-             ! deadcrootp_storage  
-             ptr => ps%deadcrootp_storage_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! deadcrootp_xfer  
-             ptr => ps%deadcrootp_xfer_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! retransp  
-             ptr => ps%retransp_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! ppool  
-             ptr => ps%ppool_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
-             ! pft_ptrunc  
-             ptr => ps%ptrunc_patch(p)
-             init_state = ptr*wt_old
-             change_state = ptr*dwt
-             new_state = init_state+change_state
-             if (wt_new /= 0._r8) then
-                ptr = new_state/wt_new
-                dwt_ptr1 = dwt_ptr1 + change_state
-             else
-                ptr = 0._r8
-                dwt_ptr1 = dwt_ptr1 - init_state
-             end if
-             
+                                                    
           end if       ! weight decreasing
        end if           ! is soil
     end do               ! patch loop
     
+    call dyn_veg_cs_Adjustments(    &
+         bounds,                        &
+         num_soilp_with_inactive,       &
+         filter_soilp_with_inactive,    &
+         prior_weights,                 &
+         patch_state_updater,           &
+         dwt_leafc_seed,                &
+         dwt_deadstemc_seed,            &
+         conv_cflux,                    &
+         dwt_frootc_to_litter,          &
+         dwt_livecrootc_to_litter,      &
+         dwt_deadcrootc_to_litter,      &
+         prod10_cflux,                  &
+         prod100_cflux,                 &
+         crop_product_cflux,            &
+         veg_cs                         &
+         )
+
+    if (use_c13) then
+       call dyn_veg_cs_Adjustments( &
+            bounds,                        &
+            num_soilp_with_inactive,       &
+            filter_soilp_with_inactive,    &
+            prior_weights,                 &
+            patch_state_updater,           &
+            dwt_leafc13_seed,              &
+            dwt_deadstemc13_seed,          &
+            conv_c13flux,                  &
+            dwt_frootc13_to_litter,        &
+            dwt_livecrootc13_to_litter,    &
+            dwt_deadcrootc13_to_litter,    &
+            prod10_c13flux,                &
+            prod100_c13flux,               &
+            crop_product_c13flux,          &
+            c13_veg_cs                     &
+            )
+    endif
+
+    if (use_c14) then
+       call dyn_veg_cs_Adjustments( &
+            bounds,                        &
+            num_soilp_with_inactive,       &
+            filter_soilp_with_inactive,    &
+            prior_weights,                 &
+            patch_state_updater,           &
+            dwt_leafc14_seed,              &
+            dwt_deadstemc14_seed,          &
+            conv_c14flux,                  &
+            dwt_frootc14_to_litter,        &
+            dwt_livecrootc14_to_litter,    &
+            dwt_deadcrootc14_to_litter,    &
+            prod10_c14flux,                &
+            prod100_c14flux,               &
+            crop_product_c14flux,          &
+            c14_veg_cs                     &
+            )
+    endif
+
+    call dyn_veg_ns_Adjustments(    &
+         bounds,                        &
+         num_soilp_with_inactive,       &
+         filter_soilp_with_inactive,    &
+         prior_weights,                 &
+         patch_state_updater,           &
+         dwt_leafn_seed,                &
+         dwt_deadstemn_seed,            &
+         dwt_npool_seed,                &
+         conv_nflux,                    &
+         dwt_frootn_to_litter,          &
+         dwt_livecrootn_to_litter,      &
+         dwt_deadcrootn_to_litter,      &
+         prod10_nflux,                  &
+         prod100_nflux,                 &
+         crop_product_nflux,            &
+         veg_ns                         &
+         )
+
+    call dyn_veg_ps_Adjustments(    &
+         bounds,                        &
+         num_soilp_with_inactive,       &
+         filter_soilp_with_inactive,    &
+         prior_weights,                 &
+         patch_state_updater,           &
+         dwt_leafp_seed,                &
+         dwt_deadstemp_seed,            &
+         dwt_ppool_seed,                &
+         conv_pflux,                    &
+         dwt_frootp_to_litter,          &
+         dwt_livecrootp_to_litter,      &
+         dwt_deadcrootp_to_litter,      &
+         prod10_pflux,                  &
+         prod100_pflux,                 &
+         crop_product_pflux,            &
+         veg_ps                         &
+         )
+
     ! calculate column-level seeding fluxes
-    do pi = 1,max_patch_per_col
-       do c = bounds%begc, bounds%endc
-          if ( pi <=  col_pp%npfts(c) ) then
-             p = col_pp%pfti(c) + pi - 1
-             
-             ! C fluxes
-             cf%dwt_seedc_to_leaf_col(c) = cf%dwt_seedc_to_leaf_col(c) + dwt_leafc_seed(p)/dt
-             cf%dwt_seedc_to_deadstem_col(c) = cf%dwt_seedc_to_deadstem_col(c) &
-                  + dwt_deadstemc_seed(p)/dt
-             
-             if ( use_c13 ) then
-                c13_cf%dwt_seedc_to_leaf_col(c) = c13_cf%dwt_seedc_to_leaf_col(c) + dwt_leafc13_seed(p)/dt
-                c13_cf%dwt_seedc_to_deadstem_col(c) = c13_cf%dwt_seedc_to_deadstem_col(c) &
-                     + dwt_deadstemc13_seed(p)/dt
-             endif
-             
-             if ( use_c14 ) then	
-                c14_cf%dwt_seedc_to_leaf_col(c) = c14_cf%dwt_seedc_to_leaf_col(c) + dwt_leafc14_seed(p)/dt
-                c14_cf%dwt_seedc_to_deadstem_col(c) = c14_cf%dwt_seedc_to_deadstem_col(c) &
-                     + dwt_deadstemc14_seed(p)/dt
-             endif
-             
-             ! N fluxes
-             nf%dwt_seedn_to_leaf_col(c) = nf%dwt_seedn_to_leaf_col(c) + dwt_leafn_seed(p)/dt
-             nf%dwt_seedn_to_deadstem_col(c) = nf%dwt_seedn_to_deadstem_col(c) &
-                  + dwt_deadstemn_seed(p)/dt
-             nf%dwt_seedn_to_npool_col(c) = nf%dwt_seedn_to_npool_col(c) &
-                  + dwt_npool_seed(p)/dt
-             ! P fluxes
-             pf%dwt_seedp_to_leaf_col(c) = pf%dwt_seedp_to_leaf_col(c) + dwt_leafp_seed(p)/dt
-             pf%dwt_seedp_to_deadstem_col(c) = pf%dwt_seedp_to_deadstem_col(c) &
-                  + dwt_deadstemp_seed(p)/dt
-             pf%dwt_seedp_to_ppool_col(c) = pf%dwt_seedp_to_ppool_col(c) &
-                  + dwt_ppool_seed(p)/dt
-          end if
-       end do
+    do p = bounds%begp, bounds%endp
+       g = veg_pp%gridcell(p)
+
+       ! C fluxes
+       veg_cf%dwt_seedc_to_leaf(p) = dwt_leafc_seed(p)/dt
+       grc_cf%dwt_seedc_to_leaf(g)   = &
+            grc_cf%dwt_seedc_to_leaf(g) + &
+            veg_cf%dwt_seedc_to_leaf(p)
+
+       veg_cf%dwt_seedc_to_deadstem(p) = dwt_deadstemc_seed(p)/dt
+       grc_cf%dwt_seedc_to_deadstem(g)   = &
+            grc_cf%dwt_seedc_to_deadstem(g) + &
+            veg_cf%dwt_seedc_to_deadstem(p)
+
+       if ( use_c13 ) then
+          c13_veg_cf%dwt_seedc_to_leaf(p) = dwt_leafc_seed(p)/dt
+          c13_grc_cf%dwt_seedc_to_leaf(g)   = &
+               c13_grc_cf%dwt_seedc_to_leaf(g) + &
+               c13_veg_cf%dwt_seedc_to_leaf(p)
+
+          c13_veg_cf%dwt_seedc_to_deadstem(p) = dwt_deadstemc_seed(p)/dt
+          c13_grc_cf%dwt_seedc_to_deadstem(g)   = &
+               c13_grc_cf%dwt_seedc_to_deadstem(g) + &
+               c13_veg_cf%dwt_seedc_to_deadstem(p)
+       endif
+
+       if ( use_c14 ) then
+          c14_veg_cf%dwt_seedc_to_leaf(p) = dwt_leafc_seed(p)/dt
+          c14_grc_cf%dwt_seedc_to_leaf(g)   = &
+               c14_grc_cf%dwt_seedc_to_leaf(g) + &
+               c14_veg_cf%dwt_seedc_to_leaf(p)
+
+          c14_veg_cf%dwt_seedc_to_deadstem(p) = dwt_deadstemc_seed(p)/dt
+          c14_grc_cf%dwt_seedc_to_deadstem(g)   = &
+               c14_grc_cf%dwt_seedc_to_deadstem(g) + &
+               c14_veg_cf%dwt_seedc_to_deadstem(p)
+       endif
+
+       ! N fluxes
+       veg_nf%dwt_seedn_to_leaf(p)   = dwt_leafn_seed(p)/dt
+       grc_nf%dwt_seedn_to_leaf(g)     = &
+            grc_nf%dwt_seedn_to_leaf(g) + &
+            veg_nf%dwt_seedn_to_leaf(p)
+
+       veg_nf%dwt_seedn_to_deadstem(p) = dwt_deadstemn_seed(p)/dt
+       grc_nf%dwt_seedn_to_deadstem(g)   = &
+            grc_nf%dwt_seedn_to_deadstem(g) + &
+            veg_nf%dwt_seedn_to_deadstem(p)
+
+
+       veg_nf%dwt_seedn_to_npool(p) = dwt_npool_seed(p)/dt
+       grc_nf%dwt_seedn_to_npool(g)   = &
+            grc_nf%dwt_seedn_to_npool(g) + &
+            veg_nf%dwt_seedn_to_npool(p)
+
+       ! P fluxes
+       veg_pf%dwt_seedp_to_leaf(p)   = dwt_leafp_seed(p)/dt
+       grc_pf%dwt_seedp_to_leaf(g)     = &
+            grc_pf%dwt_seedp_to_leaf(g) + &
+            veg_pf%dwt_seedp_to_leaf(p)
+
+       veg_pf%dwt_seedp_to_deadstem(p) = dwt_deadstemp_seed(p)/dt
+       grc_pf%dwt_seedp_to_deadstem(g)   = &
+            grc_pf%dwt_seedp_to_deadstem(g) + &
+            veg_pf%dwt_seedp_to_deadstem(p)
+
+
+       veg_pf%dwt_seedp_to_ppool(p) = dwt_npool_seed(p)/dt
+       grc_pf%dwt_seedp_to_ppool(g)   = &
+            grc_pf%dwt_seedp_to_ppool(g) + &
+            veg_pf%dwt_seedp_to_ppool(p)
+
     end do
     
-    
+    ! calculate patch-to-column slash fluxes into litter and CWD pools
+    do p = bounds%begp, bounds%endp
+       c = veg_pp%column(p)
+
+       ! fine and coarse root to litter and CWD slash carbon fluxes
+       col_cf%dwt_slash_cflux(c) =            &
+            col_cf%dwt_slash_cflux(c)       + &
+            dwt_frootc_to_litter(p)     /dt + &
+            dwt_livecrootc_to_litter(p) /dt + &
+            dwt_deadcrootc_to_litter(p) /dt
+
+       if ( use_c13 ) then
+          c13_col_cf%dwt_slash_cflux(c) =          &
+               c13_col_cf%dwt_slash_cflux(c)     + &
+               dwt_frootc13_to_litter(p)     /dt + &
+               dwt_livecrootc13_to_litter(p) /dt + &
+               dwt_deadcrootc13_to_litter(p) /dt
+       endif
+
+       if ( use_c14 ) then
+          c14_col_cf%dwt_slash_cflux(c) =          &
+               c14_col_cf%dwt_slash_cflux(c)     + &
+               dwt_frootc14_to_litter(p)     /dt + &
+               dwt_livecrootc14_to_litter(p) /dt + &
+               dwt_deadcrootc14_to_litter(p) /dt
+       endif
+
+       col_nf%dwt_slash_nflux(c) =            &
+            col_nf%dwt_slash_nflux(c)       + &
+            dwt_frootn_to_litter(p)     /dt + &
+            dwt_livecrootn_to_litter(p) /dt + &
+            dwt_deadcrootn_to_litter(p) /dt
+
+       col_pf%dwt_slash_pflux(c) =            &
+            col_pf%dwt_slash_pflux(c)       + &
+            dwt_frootp_to_litter(p)     /dt + &
+            dwt_livecrootp_to_litter(p) /dt + &
+            dwt_deadcrootp_to_litter(p) /dt
+
+    end do
+
     ! calculate pft-to-column for fluxes into litter and CWD pools
     do j = 1, nlevdecomp
        do pi = 1,max_patch_per_col
           do c = bounds%begc, bounds%endc
              if ( pi <=  col_pp%npfts(c) ) then
                 p = col_pp%pfti(c) + pi - 1
+
+                froot   = cnstate_vars%froot_prof_patch(p,j)
+                croot   = cnstate_vars%croot_prof_patch(p,j)
+                fr_flab = veg_vp%fr_flab(veg_pp%itype(p))
+                fr_fcel = veg_vp%fr_fcel(veg_pp%itype(p))
+                fr_flig = veg_vp%fr_flig(veg_pp%itype(p))
+                
                 
                 ! fine root litter carbon fluxes
-                cf%dwt_frootc_to_litr_met_c_col(c,j) = &
-                     cf%dwt_frootc_to_litr_met_c_col(c,j) + &
-                     (dwt_frootc_to_litter(p)*veg_vp%fr_flab(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                col_cf%dwt_frootc_to_litr_met_c(c,j) = &
+                     col_cf%dwt_frootc_to_litr_met_c(c,j) + &
+                     (dwt_frootc_to_litter(p)* fr_flab)/dt * froot
 
-                cf%dwt_frootc_to_litr_cel_c_col(c,j) = &
-                     cf%dwt_frootc_to_litr_cel_c_col(c,j) + &
-                     (dwt_frootc_to_litter(p)*veg_vp%fr_fcel(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                col_cf%dwt_frootc_to_litr_cel_c(c,j) = &
+                     col_cf%dwt_frootc_to_litr_cel_c(c,j) + &
+                     (dwt_frootc_to_litter(p)* fr_fcel)/dt * froot
 
-                cf%dwt_frootc_to_litr_lig_c_col(c,j) = &
-                     cf%dwt_frootc_to_litr_lig_c_col(c,j) + &
-                     (dwt_frootc_to_litter(p)*veg_vp%fr_flig(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                col_cf%dwt_frootc_to_litr_lig_c(c,j) = &
+                     col_cf%dwt_frootc_to_litr_lig_c(c,j) + &
+                     (dwt_frootc_to_litter(p)* fr_flig)/dt * froot
                 
                 
                 ! fine root litter nitrogen fluxes
-                nf%dwt_frootn_to_litr_met_n_col(c,j) = &
-                     nf%dwt_frootn_to_litr_met_n_col(c,j) + &
-                     (dwt_frootn_to_litter(p)*veg_vp%fr_flab(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
-                nf%dwt_frootn_to_litr_cel_n_col(c,j) = &
+                col_nf%dwt_frootn_to_litr_met_n(c,j) = &
+                     col_nf%dwt_frootn_to_litr_met_n(c,j) + &
+                     (dwt_frootn_to_litter(p)* fr_flab)/dt * froot
+                col_nf%dwt_frootn_to_litr_cel_n(c,j) = &
 
-                     nf%dwt_frootn_to_litr_cel_n_col(c,j) + &
-                     (dwt_frootn_to_litter(p)*veg_vp%fr_fcel(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                     col_nf%dwt_frootn_to_litr_cel_n(c,j) + &
+                     (dwt_frootn_to_litter(p)* fr_fcel)/dt * froot
 
-                nf%dwt_frootn_to_litr_lig_n_col(c,j) = &
-                     nf%dwt_frootn_to_litr_lig_n_col(c,j) + &
-                     (dwt_frootn_to_litter(p)*veg_vp%fr_flig(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                col_nf%dwt_frootn_to_litr_lig_n(c,j) = &
+                     col_nf%dwt_frootn_to_litr_lig_n(c,j) + &
+                     (dwt_frootn_to_litter(p)* fr_flig)/dt * froot
                 
 
                 ! fine root litter phosphorus fluxes
-                pf%dwt_frootp_to_litr_met_p_col(c,j) = &
-                     pf%dwt_frootp_to_litr_met_p_col(c,j) + &
-                     (dwt_frootp_to_litter(p)*veg_vp%fr_flab(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
-                pf%dwt_frootp_to_litr_cel_p_col(c,j) = &
+                col_pf%dwt_frootp_to_litr_met_p(c,j) = &
+                     col_pf%dwt_frootp_to_litr_met_p(c,j) + &
+                     (dwt_frootp_to_litter(p)* fr_flab)/dt * froot
+                col_pf%dwt_frootp_to_litr_cel_p(c,j) = &
 
-                     pf%dwt_frootp_to_litr_cel_p_col(c,j) + &
-                     (dwt_frootp_to_litter(p)*veg_vp%fr_fcel(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                     col_pf%dwt_frootp_to_litr_cel_p(c,j) + &
+                     (dwt_frootp_to_litter(p)* fr_fcel)/dt * froot
 
-                pf%dwt_frootp_to_litr_lig_p_col(c,j) = &
-                     pf%dwt_frootp_to_litr_lig_p_col(c,j) + &
-                     (dwt_frootp_to_litter(p)*veg_vp%fr_flig(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                col_pf%dwt_frootp_to_litr_lig_p(c,j) = &
+                     col_pf%dwt_frootp_to_litr_lig_p(c,j) + &
+                     (dwt_frootp_to_litter(p)* fr_flig)/dt * froot
 
                 ! livecroot fluxes to cwd
-                cf%dwt_livecrootc_to_cwdc_col(c,j) = &
-                     cf%dwt_livecrootc_to_cwdc_col(c,j) + &
-                     (dwt_livecrootc_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                col_cf%dwt_livecrootc_to_cwdc(c,j) = &
+                     col_cf%dwt_livecrootc_to_cwdc(c,j) + &
+                     (dwt_livecrootc_to_litter(p))/dt * croot
 
-                nf%dwt_livecrootn_to_cwdn_col(c,j) = &
-                     nf%dwt_livecrootn_to_cwdn_col(c,j) + &
-                     (dwt_livecrootn_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                col_nf%dwt_livecrootn_to_cwdn(c,j) = &
+                     col_nf%dwt_livecrootn_to_cwdn(c,j) + &
+                     (dwt_livecrootn_to_litter(p))/dt * croot
                 
-                pf%dwt_livecrootp_to_cwdp_col(c,j) = &
-                     pf%dwt_livecrootp_to_cwdp_col(c,j) + &
-                     (dwt_livecrootp_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                col_pf%dwt_livecrootp_to_cwdp(c,j) = &
+                     col_pf%dwt_livecrootp_to_cwdp(c,j) + &
+                     (dwt_livecrootp_to_litter(p))/dt * croot
 
                 ! deadcroot fluxes to cwd
-                cf%dwt_deadcrootc_to_cwdc_col(c,j) = &
-                     cf%dwt_deadcrootc_to_cwdc_col(c,j) + &
-                     (dwt_deadcrootc_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                col_cf%dwt_deadcrootc_to_cwdc(c,j) = &
+                     col_cf%dwt_deadcrootc_to_cwdc(c,j) + &
+                     (dwt_deadcrootc_to_litter(p))/dt * croot
 
-                nf%dwt_deadcrootn_to_cwdn_col(c,j) = &
-                     nf%dwt_deadcrootn_to_cwdn_col(c,j) + &
-                     (dwt_deadcrootn_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                col_nf%dwt_deadcrootn_to_cwdn(c,j) = &
+                     col_nf%dwt_deadcrootn_to_cwdn(c,j) + &
+                     (dwt_deadcrootn_to_litter(p))/dt * croot
              
-                pf%dwt_deadcrootp_to_cwdp_col(c,j) = &
-                     pf%dwt_deadcrootp_to_cwdp_col(c,j) + &
-                     (dwt_deadcrootp_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                col_pf%dwt_deadcrootp_to_cwdp(c,j) = &
+                     col_pf%dwt_deadcrootp_to_cwdp(c,j) + &
+                     (dwt_deadcrootp_to_litter(p))/dt * croot
 
                 if ( use_c13 ) then
                    ! C13 fine root litter fluxes
-                   c13_cf%dwt_frootc_to_litr_met_c_col(c,j) = &
-                        c13_cf%dwt_frootc_to_litr_met_c_col(c,j) + &
-                        (dwt_frootc13_to_litter(p)*veg_vp%fr_flab(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                   c13_col_cf%dwt_frootc_to_litr_met_c(c,j) = &
+                        c13_col_cf%dwt_frootc_to_litr_met_c(c,j) + &
+                        (dwt_frootc13_to_litter(p)* fr_flab)/dt * froot
 
-                   c13_cf%dwt_frootc_to_litr_cel_c_col(c,j) = &
-                        c13_cf%dwt_frootc_to_litr_cel_c_col(c,j) + &
-                        (dwt_frootc13_to_litter(p)*veg_vp%fr_fcel(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                   c13_col_cf%dwt_frootc_to_litr_cel_c(c,j) = &
+                        c13_col_cf%dwt_frootc_to_litr_cel_c(c,j) + &
+                        (dwt_frootc13_to_litter(p)* fr_fcel)/dt * froot
 
-                   c13_cf%dwt_frootc_to_litr_lig_c_col(c,j) = &
-                        c13_cf%dwt_frootc_to_litr_lig_c_col(c,j) + &
-                        (dwt_frootc13_to_litter(p)*veg_vp%fr_flig(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                   c13_col_cf%dwt_frootc_to_litr_lig_c(c,j) = &
+                        c13_col_cf%dwt_frootc_to_litr_lig_c(c,j) + &
+                        (dwt_frootc13_to_litter(p)* fr_flig)/dt * froot
 
                    ! livecroot fluxes to cwd
-                   c13_cf%dwt_livecrootc_to_cwdc_col(c,j) = &
-                        c13_cf%dwt_livecrootc_to_cwdc_col(c,j) + &
-                        (dwt_livecrootc13_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                   c13_col_cf%dwt_livecrootc_to_cwdc(c,j) = &
+                        c13_col_cf%dwt_livecrootc_to_cwdc(c,j) + &
+                        (dwt_livecrootc13_to_litter(p))/dt * croot
 
                    ! deadcroot fluxes to cwd
-                   c13_cf%dwt_deadcrootc_to_cwdc_col(c,j) = &
-                        c13_cf%dwt_deadcrootc_to_cwdc_col(c,j) + &
-                        (dwt_deadcrootc13_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                   c13_col_cf%dwt_deadcrootc_to_cwdc(c,j) = &
+                        c13_col_cf%dwt_deadcrootc_to_cwdc(c,j) + &
+                        (dwt_deadcrootc13_to_litter(p))/dt * croot
                    
                 endif
                 
                 if ( use_c14 ) then                   
                    ! C14 fine root litter fluxes
-                   c14_cf%dwt_frootc_to_litr_met_c_col(c,j) = &
-                        c14_cf%dwt_frootc_to_litr_met_c_col(c,j) + &
-                        (dwt_frootc14_to_litter(p)*veg_vp%fr_flab(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                   c14_col_cf%dwt_frootc_to_litr_met_c(c,j) = &
+                        c14_col_cf%dwt_frootc_to_litr_met_c(c,j) + &
+                        (dwt_frootc14_to_litter(p)* fr_flab)/dt * froot
 
-                   c14_cf%dwt_frootc_to_litr_cel_c_col(c,j) = &
-                        c14_cf%dwt_frootc_to_litr_cel_c_col(c,j) + &
-                        (dwt_frootc14_to_litter(p)*veg_vp%fr_fcel(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                   c14_col_cf%dwt_frootc_to_litr_cel_c(c,j) = &
+                        c14_col_cf%dwt_frootc_to_litr_cel_c(c,j) + &
+                        (dwt_frootc14_to_litter(p)* fr_fcel)/dt * froot
 
-                   c14_cf%dwt_frootc_to_litr_lig_c_col(c,j) = &
-                        c14_cf%dwt_frootc_to_litr_lig_c_col(c,j) + &
-                        (dwt_frootc14_to_litter(p)*veg_vp%fr_flig(veg_pp%itype(p)))/dt * cnstate_vars%froot_prof_patch(p,j)
+                   c14_col_cf%dwt_frootc_to_litr_lig_c(c,j) = &
+                        c14_col_cf%dwt_frootc_to_litr_lig_c(c,j) + &
+                        (dwt_frootc14_to_litter(p)* fr_flig)/dt * froot
 
                    ! livecroot fluxes to cwd
-                   c14_cf%dwt_livecrootc_to_cwdc_col(c,j) = &
-                        c14_cf%dwt_livecrootc_to_cwdc_col(c,j) + &
-                        (dwt_livecrootc14_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                   c14_col_cf%dwt_livecrootc_to_cwdc(c,j) = &
+                        c14_col_cf%dwt_livecrootc_to_cwdc(c,j) + &
+                        (dwt_livecrootc14_to_litter(p))/dt * croot
 
                    ! deadcroot fluxes to cwd
-                   c14_cf%dwt_deadcrootc_to_cwdc_col(c,j) = &
-                        c14_cf%dwt_deadcrootc_to_cwdc_col(c,j) + &
-                        (dwt_deadcrootc14_to_litter(p))/dt * cnstate_vars%croot_prof_patch(p,j)
+                   c14_col_cf%dwt_deadcrootc_to_cwdc(c,j) = &
+                        c14_col_cf%dwt_deadcrootc_to_cwdc(c,j) + &
+                        (dwt_deadcrootc14_to_litter(p))/dt * croot
                 endif
                 
              end if
@@ -2691,47 +712,115 @@ contains
        do c = bounds%begc,bounds%endc
           if (pi <= col_pp%npfts(c)) then
              p = col_pp%pfti(c) + pi - 1
+             g = veg_pp%gridcell(p)
              
              ! column-level fluxes are accumulated as positive fluxes.
              ! column-level C flux updates
-             cf%dwt_conv_cflux_col(c) = cf%dwt_conv_cflux_col(c) - conv_cflux(p)/dt
-             cf%dwt_prod10c_gain_col(c) = cf%dwt_prod10c_gain_col(c) - prod10_cflux(p)/dt
-             cf%dwt_prod100c_gain_col(c) = cf%dwt_prod100c_gain_col(c) - prod100_cflux(p)/dt
+             col_cf%dwt_conv_cflux(c) = col_cf%dwt_conv_cflux(c) - conv_cflux(p)/dt
+             col_cf%dwt_prod10c_gain(c) = col_cf%dwt_prod10c_gain(c) - prod10_cflux(p)/dt
+             col_cf%dwt_prod100c_gain(c) = col_cf%dwt_prod100c_gain(c) - prod100_cflux(p)/dt
 
-             ! These magic constants should be replaced with: nbrdlf_evr_trp_tree and nbrdlf_dcd_trp_tree
-             if(veg_pp%itype(p)==4.or.veg_pp%itype(p)==6)then
-                cf%lf_conv_cflux_col(c) = cf%lf_conv_cflux_col(c) - conv_cflux(p)/dt
-             end if
-             
+             veg_cf%dwt_prod10c_gain(p) = - prod10_cflux(p)/dt
+             grc_cf%dwt_prod10c_gain(g)   = grc_cf%dwt_prod10c_gain(g) + veg_cf%dwt_prod10c_gain(p)
+
+             veg_cf%dwt_prod100c_gain(p) = - prod100_cflux(p)/dt
+             grc_cf%dwt_prod100c_gain(g)   = grc_cf%dwt_prod100c_gain(g) + veg_cf%dwt_prod100c_gain(p)
+
              if ( use_c13 ) then
                 ! C13 column-level flux updates
-                c13_cf%dwt_conv_cflux_col(c) = c13_cf%dwt_conv_cflux_col(c) - conv_c13flux(p)/dt
-                c13_cf%dwt_prod10c_gain_col(c) = c13_cf%dwt_prod10c_gain_col(c) - prod10_c13flux(p)/dt
-                c13_cf%dwt_prod100c_gain_col(c) = c13_cf%dwt_prod100c_gain_col(c) - prod100_c13flux(p)/dt
+                c13_col_cf%dwt_conv_cflux(c) = c13_col_cf%dwt_conv_cflux(c) - conv_c13flux(p)/dt
+                c13_col_cf%dwt_prod10c_gain(c) = c13_col_cf%dwt_prod10c_gain(c) - prod10_c13flux(p)/dt
+                c13_col_cf%dwt_prod100c_gain(c) = c13_col_cf%dwt_prod100c_gain(c) - prod100_c13flux(p)/dt
+
+                c13_veg_cf%dwt_prod10c_gain(p) = - prod10_c13flux(p)/dt
+                c13_grc_cf%dwt_prod10c_gain(g)   = c13_grc_cf%dwt_prod10c_gain(g) + c13_veg_cf%dwt_prod10c_gain(p)
+
+                c13_veg_cf%dwt_prod100c_gain(p) = - prod100_c13flux(p)/dt
+                c13_grc_cf%dwt_prod100c_gain(g)   = c13_grc_cf%dwt_prod100c_gain(g) + c13_veg_cf%dwt_prod100c_gain(p)
+
              endif
              
              if ( use_c14 ) then
                 ! C14 column-level flux updates
-                c14_cf%dwt_conv_cflux_col(c) = c14_cf%dwt_conv_cflux_col(c) - conv_c14flux(p)/dt
-                c14_cf%dwt_prod10c_gain_col(c) = c14_cf%dwt_prod10c_gain_col(c) - prod10_c14flux(p)/dt
-                c14_cf%dwt_prod100c_gain_col(c) = c14_cf%dwt_prod100c_gain_col(c) - prod100_c14flux(p)/dt
+                c14_col_cf%dwt_conv_cflux(c) = c14_col_cf%dwt_conv_cflux(c) - conv_c14flux(p)/dt
+                c14_col_cf%dwt_prod10c_gain(c) = c14_col_cf%dwt_prod10c_gain(c) - prod10_c14flux(p)/dt
+                c14_col_cf%dwt_prod100c_gain(c) = c14_col_cf%dwt_prod100c_gain(c) - prod100_c14flux(p)/dt
+
+                c14_veg_cf%dwt_prod10c_gain(p) = - prod10_c14flux(p)/dt
+                c14_grc_cf%dwt_prod10c_gain(g)   = c14_grc_cf%dwt_prod10c_gain(g) + c14_veg_cf%dwt_prod10c_gain(p)
+
+                c14_veg_cf%dwt_prod100c_gain(p) = - prod100_c14flux(p)/dt
+                c14_grc_cf%dwt_prod100c_gain(g)   = c14_grc_cf%dwt_prod100c_gain(g) + c14_veg_cf%dwt_prod100c_gain(p)
+
              endif
              
              ! column-level N flux updates
-             nf%dwt_conv_nflux_col(c) = nf%dwt_conv_nflux_col(c) - conv_nflux(p)/dt
-             nf%dwt_prod10n_gain_col(c) = nf%dwt_prod10n_gain_col(c) - prod10_nflux(p)/dt
-             nf%dwt_prod100n_gain_col(c) = nf%dwt_prod100n_gain_col(c) - prod100_nflux(p)/dt
+             col_nf%dwt_conv_nflux(c) = col_nf%dwt_conv_nflux(c) - conv_nflux(p)/dt
+             col_nf%dwt_prod10n_gain(c) = col_nf%dwt_prod10n_gain(c) - prod10_nflux(p)/dt
+             col_nf%dwt_prod100n_gain(c) = col_nf%dwt_prod100n_gain(c) - prod100_nflux(p)/dt
              
+             veg_nf%dwt_prod10n_gain(p) = -prod10_nflux(p)/dt
+             grc_nf%dwt_prod10n_gain(g)   = grc_nf%dwt_prod10n_gain(g) + veg_nf%dwt_prod10n_gain(p)
+
+             veg_nf%dwt_prod100n_gain(p)= -prod100_nflux(p)/dt
+             grc_nf%dwt_prod100n_gain(g)  = grc_nf%dwt_prod100n_gain(g) + veg_nf%dwt_prod100n_gain(p)
+
              ! column-level P flux updates
 
-             pf%dwt_conv_pflux_col(c) = pf%dwt_conv_pflux_col(c) - conv_pflux(p)/dt
-             pf%dwt_prod10p_gain_col(c) = pf%dwt_prod10p_gain_col(c) - prod10_pflux(p)/dt
-             pf%dwt_prod100p_gain_col(c) = pf%dwt_prod100p_gain_col(c) - prod100_pflux(p)/dt
+             col_pf%dwt_conv_pflux(c) = col_pf%dwt_conv_pflux(c) - conv_pflux(p)/dt
+             col_pf%dwt_prod10p_gain(c) = col_pf%dwt_prod10p_gain(c) - prod10_pflux(p)/dt
+             col_pf%dwt_prod100p_gain(c) = col_pf%dwt_prod100p_gain(c) - prod100_pflux(p)/dt
+
+             veg_pf%dwt_prod10p_gain(p) = -prod10_pflux(p)/dt
+             grc_pf%dwt_prod10p_gain(g)   = grc_pf%dwt_prod10p_gain(g) + veg_pf%dwt_prod10p_gain(p)
+
+             veg_pf%dwt_prod100p_gain(p)= -prod100_pflux(p)/dt
+             grc_pf%dwt_prod100p_gain(g)  = grc_pf%dwt_prod100p_gain(g) + veg_pf%dwt_prod100p_gain(p)
 
           end if
        end do
     end do
     
+    do p = bounds%begp, bounds%endp
+       g = veg_pp%gridcell(p)
+
+       ! Note that patch-level fluxes are stored per unit GRIDCELL area - thus, we don't
+       ! need to multiply by the patch's gridcell weight when translating patch-level
+       ! fluxes into gridcell-level fluxes.
+
+       veg_cf%dwt_conv_cflux(p) = -conv_cflux(p)/dt
+       grc_cf%dwt_conv_cflux(g) = &
+            grc_cf%dwt_conv_cflux(g) + &
+            veg_cf%dwt_conv_cflux(p)
+
+       if ( use_c13 ) then
+          ! C13 column-level flux updates
+          c13_veg_cf%dwt_conv_cflux(p) = -conv_c13flux(p)/dt
+          c13_grc_cf%dwt_conv_cflux(g) = &
+               c13_grc_cf%dwt_conv_cflux(g) + &
+               c13_veg_cf%dwt_conv_cflux(p)
+       endif
+
+       if ( use_c14 ) then
+          ! C14 column-level flux updates
+          c14_veg_cf%dwt_conv_cflux(p) = -conv_c14flux(p)/dt
+          c14_grc_cf%dwt_conv_cflux(g) = &
+               c14_grc_cf%dwt_conv_cflux(g) + &
+               c14_veg_cf%dwt_conv_cflux(p)
+       endif
+
+       veg_nf%dwt_conv_nflux(p) = -conv_nflux(p)/dt
+       grc_nf%dwt_conv_nflux(g) = &
+            grc_nf%dwt_conv_nflux(g) + &
+            veg_nf%dwt_conv_nflux(p)
+
+       veg_pf%dwt_conv_pflux(p) = -conv_pflux(p)/dt
+       grc_pf%dwt_conv_pflux(g) = &
+            grc_pf%dwt_conv_pflux(g) + &
+            veg_pf%dwt_conv_pflux(p)
+
+    end do
+
     ! Deallocate pft-level flux arrays
     deallocate(dwt_leafc_seed)
     deallocate(dwt_leafn_seed)
@@ -2747,9 +836,11 @@ contains
     deallocate(conv_cflux)
     deallocate(prod10_cflux)
     deallocate(prod100_cflux)
+    deallocate(crop_product_cflux)
     deallocate(conv_nflux)
     deallocate(prod10_nflux)
     deallocate(prod100_nflux)
+    deallocate(crop_product_nflux)
 
     deallocate(dwt_leafp_seed)
     deallocate(dwt_deadstemp_seed)
@@ -2760,7 +851,8 @@ contains
     deallocate(conv_pflux)
     deallocate(prod10_pflux)
     deallocate(prod100_pflux)
-             
+    deallocate(crop_product_pflux)
+
     if ( use_c13 ) then
        deallocate(dwt_leafc13_seed)
        deallocate(dwt_deadstemc13_seed)
@@ -2770,6 +862,7 @@ contains
        deallocate(conv_c13flux)
        deallocate(prod10_c13flux)
        deallocate(prod100_c13flux)
+       deallocate(crop_product_c13flux)
     endif
              
     if ( use_c14 ) then
@@ -2781,9 +874,326 @@ contains
        deallocate(conv_c14flux)
        deallocate(prod10_c14flux)
        deallocate(prod100_c14flux)
+       deallocate(crop_product_c14flux)
     endif
     
    end associate
-   end subroutine dyn_cnbal_patch
+ end subroutine dyn_cnbal_patch
+ 
+ !-----------------------------------------------------------------------
+ subroutine CarbonStateVarsInit(cs, p)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of carbonstate_type
+   !
+   implicit none
+   !
+   ! !ARGUMENT
+   type(vegetation_carbon_state), intent(inout) :: cs
+   integer                    , intent(in)    :: p
+   
+   cs%leafc(p)              = 0._r8
+   cs%leafc_storage(p)      = 0._r8
+   cs%leafc_xfer(p)         = 0._r8
+   cs%frootc(p)             = 0._r8
+   cs%frootc_storage(p)     = 0._r8
+   cs%frootc_xfer(p)        = 0._r8
+   cs%livestemc(p)          = 0._r8
+   cs%livestemc_storage(p)  = 0._r8
+   cs%livestemc_xfer(p)     = 0._r8
+   cs%deadstemc(p)          = 0._r8
+   cs%deadstemc_storage(p)  = 0._r8
+   cs%deadstemc_xfer(p)     = 0._r8
+   cs%livecrootc(p)         = 0._r8
+   cs%livecrootc_storage(p) = 0._r8
+   cs%livecrootc_xfer(p)    = 0._r8
+   cs%deadcrootc(p)         = 0._r8
+   cs%deadcrootc_storage(p) = 0._r8
+   cs%deadcrootc_xfer(p)    = 0._r8
+   cs%gresp_storage(p)      = 0._r8
+   cs%gresp_xfer(p)         = 0._r8
+   cs%cpool(p)              = 0._r8
+   cs%xsmrpool(p)           = 0._r8
+   cs%ctrunc(p)             = 0._r8
+   cs%dispvegc(p)           = 0._r8
+   cs%storvegc(p)           = 0._r8
+   cs%totvegc(p)            = 0._r8
+   cs%totpftc(p)            = 0._r8
 
-end module dynConsBiogeochemMod
+ end subroutine CarbonStateVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine NitrogenStateVarsInit(veg_ns, p)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of nitrogenstate_type
+   !
+   implicit none
+   !
+   ! !ARGUMENT
+   type(vegetation_nitrogen_state), intent(inout) :: veg_ns
+   integer                 , intent(in)    :: p
+   
+   veg_ns%leafn(p)              = 0._r8
+   veg_ns%leafn_storage(p)      = 0._r8
+   veg_ns%leafn_xfer(p)         = 0._r8
+   veg_ns%frootn(p)             = 0._r8
+   veg_ns%frootn_storage(p)     = 0._r8
+   veg_ns%frootn_xfer(p)        = 0._r8
+   veg_ns%livestemn(p)          = 0._r8
+   veg_ns%livestemn_storage(p)  = 0._r8
+   veg_ns%livestemn_xfer(p)     = 0._r8
+   veg_ns%deadstemn(p)          = 0._r8
+   veg_ns%deadstemn_storage(p)  = 0._r8
+   veg_ns%deadstemn_xfer(p)     = 0._r8
+   veg_ns%livecrootn(p)         = 0._r8
+   veg_ns%livecrootn_storage(p) = 0._r8
+   veg_ns%livecrootn_xfer(p)    = 0._r8
+   veg_ns%deadcrootn(p)         = 0._r8
+   veg_ns%deadcrootn_storage(p) = 0._r8
+   veg_ns%deadcrootn_xfer(p)    = 0._r8
+   veg_ns%retransn(p)           = 0._r8
+   veg_ns%npool(p)              = 0._r8
+   veg_ns%ntrunc(p)             = 0._r8
+   veg_ns%dispvegn(p)           = 0._r8
+   veg_ns%storvegn(p)           = 0._r8
+   veg_ns%totvegn(p)            = 0._r8
+   veg_ns%totpftn(p)            = 0._r8
+
+ end subroutine NitrogenStateVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine PhosphorusStateVarsInit(veg_ps, p)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of phosphorusstate_type
+   !
+   implicit none
+   !
+   ! !ARGUMENT
+   type(vegetation_phosphorus_state), intent(inout) :: veg_ps
+   integer                   , intent(in)    :: p
+
+   veg_ps%leafp(p)              = 0._r8
+   veg_ps%leafp_storage(p)      = 0._r8
+   veg_ps%leafp_xfer(p)         = 0._r8
+   veg_ps%frootp(p)             = 0._r8
+   veg_ps%frootp_storage(p)     = 0._r8
+   veg_ps%frootp_xfer(p)        = 0._r8
+   veg_ps%livestemp(p)          = 0._r8
+   veg_ps%livestemp_storage(p)  = 0._r8
+   veg_ps%livestemp_xfer(p)     = 0._r8
+   veg_ps%deadstemp(p)          = 0._r8
+   veg_ps%deadstemp_storage(p)  = 0._r8
+   veg_ps%deadstemp_xfer(p)     = 0._r8
+   veg_ps%livecrootp(p)         = 0._r8
+   veg_ps%livecrootp_storage(p) = 0._r8
+   veg_ps%livecrootp_xfer(p)    = 0._r8
+   veg_ps%deadcrootp(p)         = 0._r8
+   veg_ps%deadcrootp_storage(p) = 0._r8
+   veg_ps%deadcrootp_xfer(p)    = 0._r8
+   veg_ps%retransp(p)           = 0._r8
+   veg_ps%ppool(p)              = 0._r8
+   veg_ps%ptrunc(p)             = 0._r8
+   veg_ps%dispvegp(p)           = 0._r8
+   veg_ps%storvegp(p)           = 0._r8
+   veg_ps%totvegp(p)            = 0._r8
+   veg_ps%totpftp (p)           = 0._r8
+
+ end subroutine PhosphorusStateVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine CanopyStateVarsInit(canopystate_vars, p)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of canopystate_type
+   !
+   implicit none
+   !
+   ! !ARGUMENT
+   type(canopystate_type), intent(inout) :: canopystate_vars
+   integer               , intent(in)    :: p
+
+   canopystate_vars%laisun_patch(p) = 0._r8
+   canopystate_vars%laisha_patch(p) = 0._r8
+
+ end subroutine CanopyStateVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine CNStateVarsInit(cnstate_vars, p, c)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of cnstate_type
+   !
+   use clm_varcon, only : c14ratio
+   implicit none
+   !
+   ! !ARGUMENT
+   type(cnstate_type), intent(inout) :: cnstate_vars
+   integer           , intent(in)    :: p
+   integer           , intent(in)    :: c
+
+   cnstate_vars%dormant_flag_patch(p)          = 1._r8
+   cnstate_vars%days_active_patch(p)           = 0._r8
+   cnstate_vars%onset_flag_patch(p)            = 0._r8
+   cnstate_vars%onset_counter_patch(p)         = 0._r8
+   cnstate_vars%onset_gddflag_patch(p)         = 0._r8
+   cnstate_vars%onset_fdd_patch(p)             = 0._r8
+   cnstate_vars%onset_gdd_patch(p)             = 0._r8
+   cnstate_vars%onset_swi_patch(p)             = 0._r8
+   cnstate_vars%offset_flag_patch(p)           = 0._r8
+   cnstate_vars%offset_counter_patch(p)        = 0._r8
+   cnstate_vars%offset_fdd_patch(p)            = 0._r8
+   cnstate_vars%offset_swi_patch(p)            = 0._r8
+   cnstate_vars%lgsf_patch(p)                  = 0._r8
+   cnstate_vars%bglfr_patch(p)                 = 0._r8
+   cnstate_vars%bglfr_leaf_patch(p)            = 0._r8
+   cnstate_vars%bglfr_froot_patch(p)           = 0._r8
+   cnstate_vars%bgtr_patch(p)                  = 0._r8
+   cnstate_vars%annavg_t2m_patch(p)            = cnstate_vars%annavg_t2m_col(c)
+   cnstate_vars%tempavg_t2m_patch(p)           = 0._r8
+   cnstate_vars%alloc_pnow_patch(p)            = 1._r8
+   cnstate_vars%c_allometry_patch(p)           = 0._r8
+   cnstate_vars%n_allometry_patch(p)           = 0._r8
+   cnstate_vars%p_allometry_patch(p)           = 0._r8
+   cnstate_vars%tempsum_potential_gpp_patch(p) = 0._r8
+   cnstate_vars%annsum_potential_gpp_patch(p)  = 0._r8
+   cnstate_vars%tempmax_retransn_patch(p)      = 0._r8
+   cnstate_vars%annmax_retransn_patch(p)       = 0._r8
+   cnstate_vars%downreg_patch(p)               = 0._r8
+
+   cnstate_vars%tempmax_retransp_patch(p)      = 0._r8
+   cnstate_vars%annmax_retransp_patch(p)       = 0._r8
+
+   if ( use_c14 ) then
+      cnstate_vars%rc14_atm_patch(p) = c14ratio
+      cnstate_vars%rc14_atm_patch(p) = 0._r8
+   endif
+
+ end subroutine CNStateVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine CarbonFluxVarsInit(cf, p)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of carbonflux_type
+   !
+   use clm_varcon, only : c13ratio
+   !
+   implicit none
+   !
+   ! !ARGUMENT
+   type(vegetation_carbon_flux), intent(inout) :: cf
+   integer              , intent(in)    :: p
+
+   cf%xsmrpool_recover(p)      = 0._r8
+   cf%plant_calloc(p)          = 0._r8
+   cf%excess_cflux(p)          = 0._r8
+   cf%prev_leafc_to_litter(p)  = 0._r8
+   cf%prev_frootc_to_litter(p) = 0._r8
+   cf%availc(p)                = 0._r8
+   cf%gpp_before_downreg(p)    = 0._r8
+   cf%tempsum_npp(p)           = 0._r8
+   cf%annsum_npp(p)            = 0._r8
+
+   if ( use_c13 ) then
+      cf%xsmrpool_c13ratio(p) = c13ratio
+   end if
+
+ end subroutine CarbonFluxVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine NitrogenFluxVarsInit(nf, p)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of nitrogenflux_type
+   !
+   implicit none
+   !
+   ! !ARGUMENT
+   type(nitrogenflux_type), intent(inout) :: nf
+   integer                , intent(in)    :: p
+
+   veg_nf%plant_ndemand(p)         = 0._r8
+   veg_nf%avail_retransn(p)        = 0._r8
+   veg_nf%plant_nalloc(p)          = 0._r8
+
+ end subroutine NitrogenFluxVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine PhosphorusFluxVarsInit(pf, p)
+   !
+   ! !DESCRIPTION:
+   ! Initializes p-th patch of phosphorusflux_type
+   !
+   implicit none
+   !
+   ! !ARGUMENT
+   type(phosphorusflux_type), intent(inout) :: pf
+   integer                  , intent(in)    :: p
+
+   veg_pf%plant_pdemand(p)         = 0._r8
+   veg_pf%avail_retransp(p)        = 0._r8
+   veg_pf%plant_palloc(p)          = 0._r8
+
+ end subroutine PhosphorusFluxVarsInit
+
+ !-----------------------------------------------------------------------
+ subroutine dyn_cnbal_column( bounds, clump_index, column_state_updater, &
+       col_cs, c13_col_cs, c14_col_cs, &
+       phosphorusstate_vars, col_ns, col_ps)
+   !
+   ! !DESCRIPTION:
+   ! Modify column-level state variables to maintain carbon, nitrogen
+   ! and phosphorus balance with dynamic column weights.
+   !
+   ! !USES:
+   use dynColumnStateUpdaterMod, only : column_state_updater_type
+   use dynPriorWeightsMod      , only : prior_weights_type
+   use clm_varctl              , only : use_lch4
+   !
+   ! !ARGUMENTS:
+   type(bounds_type)               , intent(in)    :: bounds
+   integer                         , intent(in)    :: clump_index
+   type(column_state_updater_type) , intent(in)    :: column_state_updater
+   type(column_carbon_state)       , intent(inout) :: col_cs
+   type(column_carbon_state)       , intent(inout) :: c13_col_cs
+   type(column_carbon_state)       , intent(inout) :: c14_col_cs
+   type(phosphorusstate_type)      , intent(inout) :: phosphorusstate_vars
+   type(column_nitrogen_state)     , intent(inout) :: col_ns
+   type(column_phosphorus_state)   , intent(inout) :: col_ps
+   !
+   ! !LOCAL VARIABLES:
+
+   character(len=*), parameter :: subname = 'dyn_cnbal_col'
+   !-----------------------------------------------------------------------
+
+   associate(&
+         cs     => col_cs,     &
+         c13_cs => c13_col_cs, &
+         c14_cs => c14_col_cs, &
+         ns     => col_ns  , &
+         ps     => phosphorusstate_vars  &
+         )
+
+    call dyn_col_cs_Adjustments(bounds, clump_index, column_state_updater, col_cs)
+
+   if (use_c13) then
+      call dyn_col_cs_Adjustments(bounds, clump_index, column_state_updater, c13_col_cs)
+   end if
+
+   if (use_c14) then
+      call dyn_col_cs_Adjustments(bounds, clump_index, column_state_updater, c14_col_cs)
+   end if
+
+   call dyn_col_ns_Adjustments(bounds, clump_index, column_state_updater, col_ns)
+
+   call dyn_col_ps_Adjustments(bounds, clump_index, column_state_updater, col_ps)
+
+   ! DynamicColumnAdjustments for CH4 needs to be implemented
+
+ end associate
+
+end subroutine dyn_cnbal_column
+
+ end module dynConsBiogeochemMod

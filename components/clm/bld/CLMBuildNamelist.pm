@@ -789,9 +789,9 @@ sub setup_cmdl_fates_mode {
       # The following variables may be set by the user and are compatible with use_fates
       # no need to set defaults, covered in a different routine
       my @list  = (  "use_fates_spitfire", "use_vertsoilc", "use_century_decomp",
-                     "use_fates_planthydro", "use_fates_insect", "use_fates_ed_st3", 
-		     "use_fates_ed_prescribed_phys", "use_fates_inventory_init", 
-		     "fates_inventory_ctrl_filename","use_fates_logging" );
+                     "use_fates_planthydro","use_fates_insect", "use_fates_ed_st3", "use_fates_ed_prescribed_phys", 
+		     "use_fates_inventory_init", "fates_inventory_ctrl_filename","use_fates_logging",
+		     "use_fates_parteh_mode");
       foreach my $var ( @list ) {
 	  if ( defined($nl->get_value($var))  ) {
 	      $nl_flags->{$var} = $nl->get_value($var);
@@ -815,6 +815,10 @@ sub setup_cmdl_fates_mode {
            fatal_error("$var is being set, but can ONLY be set when -bgc ed option is used.\n");
        }
        $var = "use_fates_logging";
+       if ( defined($nl->get_value($var)) ) {
+	   fatal_error("$var is being set, but can ONLY be set when -bgc ed option is used.\n");
+       }
+       $var = "fates_parteh_mode";
        if ( defined($nl->get_value($var)) ) {
 	   fatal_error("$var is being set, but can ONLY be set when -bgc ed option is used.\n");
        }
@@ -3341,9 +3345,10 @@ sub setup_logic_fates {
 
     if ($physv->as_long() >= $physv->as_long("clm4_5") && value_is_true( $nl_flags->{'use_fates'})  ) {
  	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_spitfire', 'use_fates'=>$nl_flags->{'use_fates'} );
-	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_logging',            'use_fates'=>$nl_flags->{'use_fates'} );
+	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_logging',            'use_fates'=>$nl_flags->{'use_fates'});
 	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_planthydro',         'use_fates'=>$nl_flags->{'use_fates'});
-	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_insect',             'use_ed'=>$nl_flags->{'use_ed'});
+	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_insect',             'use_fates'=>$nl_flags->{'use_fates'});
+	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'fates_parteh_mode',            'use_fates'=>$nl_flags->{'use_fates'});
 	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_ed_st3',             'use_fates'=>$nl_flags->{'use_fates'});
 	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_ed_prescribed_phys', 'use_fates'=>$nl_flags->{'use_fates'});
 	add_default($test_files, $nl_flags->{'inputdata_rootdir'}, $definition, $defaults, $nl, 'use_fates_inventory_init',     'use_fates'=>$nl_flags->{'use_fates'});
