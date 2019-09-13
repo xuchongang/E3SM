@@ -67,7 +67,7 @@ module CLMFatesInterfaceMod
    use clm_varpar        , only : i_met_lit, i_cel_lit, i_lig_lit
    use PhotosynthesisType , only : photosyns_type
    Use TopounitType      , only : topounit_atmospheric_flux, topounit_atmospheric_state
-   use atm2lndType       , only : atm2lnd_type
+   use atm2lndType       , only : atm2lnd_type, use_salinity
    use SurfaceAlbedoType , only : surfalb_type
    use SolarAbsorbedType , only : solarabs_type
    use CNCarbonFluxType  , only : carbonflux_type
@@ -584,6 +584,7 @@ contains
       integer  :: t                        ! topounit index (HLM)
       integer  :: ifp                      ! patch index
       integer  :: p                        ! HLM patch index
+      integer  :: g                        ! HLM grid index     
       integer  :: nc                       ! clump index
       integer  :: yr                       ! year (0, ...)
       integer  :: mon                      ! month (1, ..., 12)
@@ -674,7 +675,10 @@ contains
             this%fates(nc)%bc_in(s)%h2o_liq_sisl(1:nlevsoil) =  waterstate_inst%h2osoi_liq_col(c,1:nlevsoil)
          end if
          
-
+         if(use_salinity)then
+	    g = col_pp%gridcell(c)
+  	    this%fates(nc)%bc_in(s)%salinity_sl(1:nlevsoil) =  atm2lnd_inst%forc_salt_not_downscaled_grc(g)
+	 end if
       end do
 
       ! ---------------------------------------------------------------------------------
