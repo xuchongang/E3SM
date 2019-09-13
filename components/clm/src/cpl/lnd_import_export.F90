@@ -5,7 +5,7 @@ module lnd_import_export
   use decompmod    , only: bounds_type
   use lnd2atmType  , only: lnd2atm_type
   use lnd2glcMod   , only: lnd2glc_type
-  use atm2lndType  , only: atm2lnd_type
+  use atm2lndType  , only: atm2lnd_type, use_salinity
   use glc2lndMod   , only: glc2lnd_type
   use GridcellType , only: grc_pp          ! for access to gridcell topology
   use TopounitType , only: top_as, top_af  ! atmospheric state and flux variables  
@@ -236,6 +236,7 @@ contains
           if (atm2lnd_vars%metsource .ne. 5) metvars(5) = 'PRECTmms'
           if (atm2lnd_vars%metsource .ne. 5) metvars(6) = 'WIND'
           metvars(7) = 'FLDS'
+	  if(use_salinity)metvars(8) = 'SALT'
           if (atm2lnd_vars%metsource .eq. 5) then 
               metvars(4) = 'SWNDF'
               metvars(5) = 'RAINC'
@@ -537,6 +538,13 @@ contains
                                                      atm2lnd_vars%add_offsets(3))*wt1(3) + (atm2lnd_vars%atm_input(3,g,1,tindex(3,2)) &
                                                      *atm2lnd_vars%scale_factors(3)+atm2lnd_vars%add_offsets(3))*wt2(3)) * &
                                                      atm2lnd_vars%var_mult(3,g,mon) + atm2lnd_vars%var_offset(3,g,mon), 1e-9_r8)
+	!Salinity
+	if(use_salinity) then
+          atm2lnd_vars%forc_salt_not_downscaled_grc(g) = max(((atm2lnd_vars%atm_input(8,g,1,tindex(8,1))*atm2lnd_vars%scale_factors(8)+ &
+                                                     atm2lnd_vars%add_offsets(8))*wt1(8) + (atm2lnd_vars%atm_input(8,g,1,tindex(8,2)) &
+                                                     *atm2lnd_vars%scale_factors(8)+atm2lnd_vars%add_offsets(8))*wt2(8)) * &
+                                                     atm2lnd_vars%var_mult(8,g,mon) + atm2lnd_vars%var_offset(8,g,mon), 1e-9_r8)
+	endif					     					     
 
         if (atm2lnd_vars%metsource == 2) then  !convert RH to qbot						     
           if (tbot > SHR_CONST_TKFRZ) then
