@@ -17,7 +17,7 @@ module atm2lndType
   use abortutils    , only : endrun
   use VegetationType     , only : veg_pp
   !
-  ! !PUBLIC TYPES:
+  ! !PUBLIC TYPES: 
   implicit none
   private
   save
@@ -35,8 +35,9 @@ module atm2lndType
   ! code. Instead use the datatype variables that have a _col suffix
   ! which gives the downscaled versions of these fields.
   !----------------------------------------------------
+  
   type, public :: atm2lnd_type
-      !DMR additions for CPL_BYPASS option
+      !DMR additions for CPL_BYPASS option     
 #ifdef CPL_BYPASS
       integer*2, pointer :: atm_input                (:,:,:,:) => null()  !Single-site meteorological input
       real(r8), pointer :: add_offsets                     (:) => null()  !offsets for compressed met drivers
@@ -89,6 +90,7 @@ module atm2lndType
      real(r8), pointer :: forc_rain_not_downscaled_grc  (:)   => null() ! not downscaled atm rain rate [mm/s]                       
      real(r8), pointer :: forc_snow_not_downscaled_grc  (:)   => null() ! not downscaled atm snow rate [mm/s]                       
      real(r8), pointer :: forc_lwrad_not_downscaled_grc (:)   => null() ! not downscaled atm downwrd IR longwave radiation (W/m**2) 
+     real(r8), pointer :: forc_salt_not_downscaled_grc  (:)   => null() ! not downscaled soil salinity (ppt) 
 
      ! atm->lnd downscaled
      real(r8), pointer :: forc_t_downscaled_col         (:)   => null() ! downscaled atm temperature (Kelvin)
@@ -142,6 +144,7 @@ module atm2lndType
 
   end type atm2lnd_type
   !----------------------------------------------------
+  logical, public, parameter :: use_salinity = .false.                        !use salinity or not
 
 contains
 
@@ -236,7 +239,8 @@ contains
     allocate(this%forc_lwrad_not_downscaled_grc (begg:endg))        ; this%forc_lwrad_not_downscaled_grc (:)   = ival
     allocate(this%forc_rain_not_downscaled_grc  (begg:endg))        ; this%forc_rain_not_downscaled_grc  (:)   = ival
     allocate(this%forc_snow_not_downscaled_grc  (begg:endg))        ; this%forc_snow_not_downscaled_grc  (:)   = ival
-    
+    allocate(this%forc_salt_not_downscaled_grc  (begg:endg))        ; this%forc_salt_not_downscaled_grc  (:)   = ival
+   
     ! atm->lnd downscaled
     allocate(this%forc_t_downscaled_col         (begc:endc))        ; this%forc_t_downscaled_col         (:)   = ival
     allocate(this%forc_q_downscaled_col         (begc:endc))        ; this%forc_q_downscaled_col         (:)   = ival
@@ -388,6 +392,13 @@ contains
     call hist_addfld1d (fname='TBOT', units='K',  &
          avgflag='A', long_name='atmospheric air temperature', &
          ptr_lnd=this%forc_t_not_downscaled_grc)
+ 
+    if(use_salinity)then	 
+     this%forc_salt_not_downscaled_grc(begg:endg) = spval
+     call hist_addfld1d (fname='SALT', units='ppt',  &
+         avgflag='A', long_name='Coastal Soil Salinity', &
+         ptr_lnd=this%forc_salt_not_downscaled_grc)
+    endif	 
 
     this%forc_th_not_downscaled_grc(begg:endg) = spval
     call hist_addfld1d (fname='THBOT', units='K',  &
