@@ -49,6 +49,7 @@ module clm_varpar
   integer, parameter :: numveg      =  16     ! number of veg types (without specific crop)
   integer, parameter :: nlayer      =   3     ! number of VIC soil layer --Added by AWang
   integer            :: nlayert               ! number of VIC soil layer + 3 lower thermal layers
+  integer, parameter :: nfloodingtimes = 2    ! number of flooded times
 
   integer :: numpft      = mxpft   ! actual # of patches (without bare)
   integer :: numcft      =  10     ! actual # of crops
