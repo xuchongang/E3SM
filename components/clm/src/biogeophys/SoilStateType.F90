@@ -90,6 +90,9 @@ module SoilStateType
      real(r8), pointer :: floodingrate_col     (:,:) ! flooding rate (mm/seconds)
      real(r8), pointer :: floodingduration_col (:,:) ! flooding duration (seconds)
 
+     real(r8), pointer :: k_soil_root_patch    (:,:) ! patch soil-root interface conductance [mm/s]
+     real(r8), pointer :: root_conductance_patch(:,:) ! patch root conductance [mm/s]
+     real(r8), pointer :: soil_conductance_patch(:,:) ! patch soil conductance [mm/s]
 
    contains
 
@@ -191,6 +194,9 @@ contains
     allocate(this%floodingrate_col      (begc:endc,nfloodingtimes))     ; this%floodingrate_col     (:,:) = nan
     allocate(this%floodingduration_col  (begc:endc,nfloodingtimes))     ; this%floodingduration_col (:,:) = nan 
 
+    allocate(this%k_soil_root_patch    (begp:endp,1:nlevsoi))           ; this%k_soil_root_patch (:,:) = nan
+    allocate(this%root_conductance_patch(begp:endp,1:nlevsoi))          ; this%root_conductance_patch (:,:) = nan
+    allocate(this%soil_conductance_patch(begp:endp,1:nlevsoi))          ; this%soil_conductance_patch (:,:) = nan
 
   end subroutine InitAllocate
 
@@ -910,6 +916,7 @@ contains
     use restUtilMod
     use ncdio_pio
     use clm_varctl,  only : use_dynroot
+    use clm_varctl,  only : use_hydrstress
     use RootBiophysMod      , only : init_vegrootfr
     !
     ! !ARGUMENTS:
@@ -922,7 +929,17 @@ contains
     logical          :: readvar   ! determine if variable is on initial file
     logical          :: readrootfr = .false.
     !-----------------------------------------------------------------------
+    if(use_hydrstress) then
+       call restartvar(ncid=ncid, flag=flag, varname='SMP', xtype=ncd_double,  &
+            dim1name='column', dim2name='levgrnd', switchdim=.true., &
+            long_name='soil matric potential', units='mm', &
+            interpinic_flag='interp', readvar=readvar, data=this%smp_l_col)
 
+       call restartvar(ncid=ncid, flag=flag, varname='HK', xtype=ncd_double,  &
+            dim1name='column', dim2name='levgrnd', switchdim=.true., &
+            long_name='hydraulic conductivity', units='mm/s', &
+            interpinic_flag='interp', readvar=readvar, data=this%hk_l_col)
+    endif
     if(use_dynroot) then
        call restartvar(ncid=ncid, flag=flag, varname='root_depth', xtype=ncd_double,  &
             dim1name='pft', &

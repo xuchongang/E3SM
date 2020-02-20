@@ -80,6 +80,9 @@ module gw_drag
   ! Background stress source strength.
   real(r8) :: taubgnd = unset_r8
 
+  ! Convective heating rate conversion factor, default is 20.0_r8
+  real(r8) :: gw_convect_hcf = 20.0_r8
+
   ! Whether or not to enforce an upper boundary condition of tau = 0.
   ! (Like many variables, this is only here to hold the value between
   ! the readnl phase and the init phase of the CAM physics; only gw_common
@@ -129,7 +132,7 @@ subroutine gw_drag_readnl(nlfile)
   real(r8) :: gw_dc = unset_r8
 
   namelist /gw_drag_nl/ pgwv, gw_dc, tau_0_ubc, effgw_beres, effgw_cm, &
-       effgw_oro, fcrit2, frontgfc, gw_drag_file, taubgnd
+      effgw_oro, fcrit2, frontgfc, gw_drag_file, taubgnd, gw_convect_hcf
   !----------------------------------------------------------------------
 
   if (masterproc) then
@@ -158,6 +161,7 @@ subroutine gw_drag_readnl(nlfile)
   call mpibcast(frontgfc,    1, mpir8,  0, mpicom)
   call mpibcast(taubgnd,     1, mpir8,  0, mpicom)
   call mpibcast(gw_drag_file, len(gw_drag_file), mpichar, 0, mpicom)
+  call mpibcast(gw_convect_hcf, 1, mpir8,  0, mpicom)
 #endif
 
   dc = gw_dc
@@ -570,6 +574,7 @@ subroutine gw_tend(state, sgh, pbuf, dt, ptend, cam_in)
   use gw_oro,     only: gw_oro_src
   use gw_front,   only: gw_cm_src
   use gw_convect, only: gw_beres_src
+  use dycore,     only: dycore_is
   !------------------------------Arguments--------------------------------
   type(physics_state), intent(in) :: state      ! physics state structure
   ! Standard deviation of orography.
@@ -665,6 +670,8 @@ subroutine gw_tend(state, sgh, pbuf, dt, ptend, cam_in)
   ! local override option for constituents cnst_type
   character(len=3), dimension(pcnst) :: cnst_type_loc
 
+  logical :: do_latitude_taper
+
   !------------------------------------------------------------------------
 
   ! Make local copy of input state.
@@ -742,10 +749,12 @@ subroutine gw_tend(state, sgh, pbuf, dt, ptend, cam_in)
         ! Determine wave sources for Beres04 scheme
         call gw_beres_src(ncol, pgwv, state1%lat(:ncol), u, v, ttend_dp, &
              zm, src_level, tend_level, tau, ubm, ubi, xv, yv, c, &
-             hdepth, maxq0)
+             hdepth, maxq0, gw_convect_hcf)
+
+        do_latitude_taper = .false.
 
         ! Solve for the drag profile with Beres source spectrum.
-        call gw_drag_prof(ncol, pgwv, src_level, tend_level, .false., dt, &
+        call gw_drag_prof(ncol, pgwv, src_level, tend_level, do_latitude_taper, dt, &
              state1%lat(:ncol), t,    ti, pmid, pint, dpm,   rdpm, &
              piln, rhoi,       nm,   ni, ubm,  ubi,  xv,    yv,   &
              effgw_beres, c,   kvtt, q,  dse,  tau,  utgw,  vtgw, &
@@ -801,8 +810,14 @@ subroutine gw_tend(state, sgh, pbuf, dt, ptend, cam_in)
         call gw_cm_src(ncol, pgwv, kbotbg, u, v, frontgf, &
              src_level, tend_level, tau, ubm, ubi, xv, yv, c)
 
+        if (dycore_is('UNSTRUCTURED')) then
+          do_latitude_taper = .false.
+        else
+          do_latitude_taper = .true.
+        end if
+
         ! Solve for the drag profile with C&M source spectrum.
-        call gw_drag_prof(ncol, pgwv, src_level, tend_level, .true., dt, &
+        call gw_drag_prof(ncol, pgwv, src_level, tend_level, do_latitude_taper, dt, &
              state1%lat(:ncol), t,    ti, pmid, pint, dpm,   rdpm, &
              piln, rhoi,       nm,   ni, ubm,  ubi,  xv,    yv,   &
              effgw_cm,    c,   kvtt, q,  dse,  tau,  utgw,  vtgw, &
@@ -854,8 +869,10 @@ subroutine gw_tend(state, sgh, pbuf, dt, ptend, cam_in)
           u, v, t, sgh(:ncol), pmid, pint, dpm, zm, nm, &
           src_level, tend_level, tau, ubm, ubi, xv, yv, c)
 
+     do_latitude_taper = .false.
+
      ! Solve for the drag profile with orographic sources.
-     call gw_drag_prof(ncol, 0, src_level, tend_level, .false., dt, &
+     call gw_drag_prof(ncol, 0, src_level, tend_level, do_latitude_taper, dt, &
           state1%lat(:ncol), t,    ti, pmid, pint, dpm,   rdpm, &
           piln, rhoi,       nm,   ni, ubm,  ubi,  xv,    yv,   &
           effgw_oro,   c,   kvtt, q,  dse,  tau,  utgw,  vtgw, &

@@ -99,9 +99,10 @@ OPTION(BUILD_HOMME_PREQX "Primitive equations FEM" ON)
 OPTION(BUILD_HOMME_THETA "SB81 NH model with theta and Exner pressure" ON)
 OPTION(BUILD_HOMME_PREQX_ACC "Primitive equations FEM with OpenACC" ON)
 OPTION(BUILD_HOMME_PREQX_KOKKOS "Primitive equations FEM with Kokkos" OFF)
-OPTION(BUILD_HOMME_PESE  "Primitive equations with vertical spectral elements" OFF)
+OPTION(ENABLE_PREQX_KOKKOS_BFB_TESTS "Turn on unit tests for XX and bfb for F vs XX" OFF)
 OPTION(BUILD_HOMME_SWIM  "Shallow water equations implicit" OFF)
 OPTION(BUILD_HOMME_PRIM  "Primitive equations implicit" OFF)
+OPTION(BUILD_HOMME_TOOL  "Offline tool" ON)
 OPTION(HOMME_ENABLE_COMPOSE "Build COMPOSE semi-Lagrangian tracer transport code" ON)
 
 #by default we don't need cxx
@@ -122,7 +123,7 @@ IF (${BUILD_HOMME_PREQX_KOKKOS})
   SET (HOMME_USE_KOKKOS TRUE)
   SET (HOMME_USE_CXX TRUE)
   IF (NOT ${BUILD_HOMME_PREQX} AND ${HOMME_BUILD_EXECS})
-    # If we build theta kokkos, we also build theta, so we can compare
+    # If we build preqx kokkos, we also build preqx, so we can compare
     MESSAGE (STATUS "Setting manually disabled BUILD_HOMME_PREQX to ON, since BUILD_HOMME_PREQX_KOKKOS is ON.")
 
     # We need to compare against F90 implementation, so turn this on
@@ -132,6 +133,10 @@ ENDIF ()
 IF (${HOMME_ENABLE_COMPOSE})
   SET (HOMME_USE_CXX TRUE)
   SET (HOMME_USE_KOKKOS TRUE)
+ENDIF ()
+#if not kokkos, then no bfb tests
+IF (NOT ${BUILD_HOMME_PREQX_KOKKOS})
+  SET (ENABLE_PREQX_KOKKOS_BFB_TESTS FALSE)
 ENDIF ()
 
 IF (${HOMME_USE_CXX})
@@ -180,7 +185,7 @@ ENDIF()
 ##############################################################################
 # Compiler options set in cmake/SetCompiler.cmake
 ##############################################################################
-INCLUDE(SetCompilerFlags)
+INCLUDE(${HOMME_SOURCE_DIR}/cmake/SetCompilerFlags.cmake)
 
 
 OPTION(HOMME_USE_MKL "Whether to use Intel's MKL instead of blas/lapack" FALSE)
@@ -199,9 +204,6 @@ ELSE()
     FIND_PACKAGE(LAPACK REQUIRED)
   ELSE()
     SET(HOMME_FIND_BLASLAPACK FALSE)
-    # Build the blas and lapack provided with homme
-    ADD_SUBDIRECTORY(libs/blas)
-    ADD_SUBDIRECTORY(libs/lapack)
   ENDIF()
 ENDIF()
 
@@ -355,7 +357,7 @@ IF (${HOMME_USE_KOKKOS})
   INCLUDE(Kokkos)
 ENDIF ()
 
-IF (${HOMME_USE_KOKKOS} AND ${HOMME_BUILD_EXECS})
+IF (${HOMME_USE_KOKKOS} AND ${HOMME_BUILD_EXECS} AND ${ENABLE_PREQX_KOKKOS_BFB_TESTS})
   # Add unit tests for C++ code
   ADD_SUBDIRECTORY(test/unit_tests)
 ENDIF ()
@@ -380,7 +382,6 @@ IF(${BUILD_HOMME_PREQX})
 ENDIF()
 
 IF(${BUILD_HOMME_THETA})
-  ADD_SUBDIRECTORY(src/theta)
   ADD_SUBDIRECTORY(src/theta-l)
 ENDIF()
 
@@ -392,16 +393,16 @@ IF(${BUILD_HOMME_PREQX_KOKKOS})
   ADD_SUBDIRECTORY(src/preqx_kokkos)
 ENDIF()
 
-IF(${BUILD_HOMME_PESE})
-  ADD_SUBDIRECTORY(src/pese)
-ENDIF()
-
 IF(${BUILD_HOMME_SWIM})
   ADD_SUBDIRECTORY(src/swim)
 ENDIF()
 
 IF(${BUILD_HOMME_PRIM})
   ADD_SUBDIRECTORY(src/prim)
+ENDIF()
+
+IF(${BUILD_HOMME_TOOL})
+  ADD_SUBDIRECTORY(src/tool)
 ENDIF()
 
 # Tests and execs only if this is a standalone build
@@ -415,6 +416,14 @@ ADD_CUSTOM_TARGET(clean-all
    COMMAND ${CMAKE_BUILD_TOOL} clean
    COMMAND ${CMAKE_COMMAND} -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/clean-cmake-files.cmake"
 )
+
+IF (NOT "${PROJECT_NAME}" STREQUAL "HOMME")
+  # Homme is used as a subproject. We need to make the compiler options available to the outside
+  SET (HOMME_C_FLAGS ${CMAKE_C_FLAGS} PARENT_SCOPE)
+  SET (HOMME_CXX_FLAGS ${CMAKE_CXX_FLAGS} PARENT_SCOPE)
+  SET (HOMME_Fortran_FLAGS ${CMAKE_Fortran_FLAGS} PARENT_SCOPE)
+  SET (HOMME_LINKER_FLAGS ${CMAKE_EXE_LINKER_FLAGS} PARENT_SCOPE)
+ENDIF ()
 
 IF (${HOMME_USE_KOKKOS})
   # Put this last so that tribits.cmake's 'check' target doesn't conflict with
