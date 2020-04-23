@@ -678,8 +678,11 @@ contains
       
       
       !detemine if there is flooding for soil column
-      do c = bounds%begc, bounds%endc
-	 
+      !do c = bounds%begc, bounds%endc
+      do f = 1, fn
+         p = filterp(f)
+         c = veg_pp%column(p)
+         g = veg_pp%gridcell(p)	 
          if ( floodingstatus(c)==1 ) then
             ! see if it's the right time of day to start irrigating:
             local_time = modulo(time + nint(grc_pp%londeg(g)/degpsec), isecspday)
