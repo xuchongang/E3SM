@@ -1188,8 +1188,8 @@ contains
                           soilstate_inst%watsat_col(c,1:nlevsoil)
 
                      this%fates(nc)%bc_in(s)%watres_sisl(1:nlevsoil) = &
-                          spval
-                     !  soilstate_inst%watres_col(c,1:nlevsoil)
+                     !     spval
+                       soilstate_inst%watmin_col(c,1:nlevsoil)
                      
                      this%fates(nc)%bc_in(s)%sucsat_sisl(1:nlevsoil) = &
                           soilstate_inst%sucsat_col(c,1:nlevsoil)
@@ -2362,6 +2362,9 @@ contains
       s = this%f2hmap(nc)%hsites(c)
       ifp = p - col_pp%pfti(c)
       this%fates(nc)%bc_in(s)%qflx_transp_pa(ifp) = waterflux_inst%qflx_tran_veg_patch(p)
+      if(isnan(waterflux_inst%qflx_tran_veg_patch(p)))then !correction for the first time step
+        this%fates(nc)%bc_in(s)%qflx_transp_pa(ifp)=0._r8
+      end if
    end do
 
 
