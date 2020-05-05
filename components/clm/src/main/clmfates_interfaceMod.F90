@@ -47,6 +47,7 @@ module CLMFatesInterfaceMod
    use clm_varctl        , only : use_fates_spitfire
    use clm_varctl        , only : fates_parteh_mode
    use clm_varctl        , only : use_fates_planthydro
+   use clm_varctl        , only : use_fates_cohort_age_tracking
    use clm_varctl        , only : use_fates_ed_st3
    use clm_varctl        , only : use_fates_ed_prescribed_phys
    use clm_varctl        , only : use_fates_logging
@@ -252,6 +253,7 @@ contains
       integer                                        :: pass_logging
       integer                                        :: pass_ed_prescribed_phys
       integer                                        :: pass_planthydro
+      integer                                        :: pass_cohort_age_tracking
       integer                                        :: pass_inventory_init
       integer                                        :: pass_is_restart
       integer                                        :: nc        ! thread index
@@ -349,6 +351,14 @@ contains
       end if
       call set_fates_ctrlparms('use_planthydro',ival=pass_planthydro)
 
+      if(use_fates_cohort_age_tracking) then
+         pass_cohort_age_tracking = 1
+      else
+         pass_cohort_age_tracking = 0
+      end if
+      call set_fates_ctrlparms('use_cohort_age_tracking',ival=pass_cohort_age_tracking)
+
+      
       if(use_fates_inventory_init) then
          pass_inventory_init = 1
       else
@@ -503,7 +513,6 @@ contains
 
       ! This will initialize all FATES globals,
       ! particular PARTEH and HYDRO globals
-
       call InitFatesGlobals(masterproc)
 
       call this%init_history_io(bounds_proc)
@@ -1174,12 +1183,13 @@ contains
                      nlevsoil = this%fates(nc)%bc_in(s)%nlevsoil
                      this%fates(nc)%bc_in(s)%hksat_sisl(1:nlevsoil) = &
                           soilstate_inst%hksat_col(c,1:nlevsoil)
-
+                     
                      this%fates(nc)%bc_in(s)%watsat_sisl(1:nlevsoil) = &
                           soilstate_inst%watsat_col(c,1:nlevsoil)
-                     
+
                      this%fates(nc)%bc_in(s)%watres_sisl(1:nlevsoil) = &
-                          soilstate_inst%watmin_col(c,1:nlevsoil)
+                          spval
+                     !  soilstate_inst%watres_col(c,1:nlevsoil)
                      
                      this%fates(nc)%bc_in(s)%sucsat_sisl(1:nlevsoil) = &
                           soilstate_inst%sucsat_col(c,1:nlevsoil)
@@ -1745,7 +1755,7 @@ contains
          end do
       end do
 
-      dtime = get_step_size()
+      dtime = real(get_step_size(),r8)
       
       ! Call photosynthesis
       
@@ -1812,7 +1822,8 @@ contains
     end do
 
 
-    dtime = get_step_size()
+    dtime = real(get_step_size(),r8)
+    
     call  AccumulateFluxes_ED(this%fates(nc)%nsites,  &
                                this%fates(nc)%sites, &
                                this%fates(nc)%bc_in,  &
@@ -1938,6 +1949,7 @@ contains
         totlitc       => col_cs%totlitc)   ! (gC/m2) total litter carbon in BGC pools
       
       nc = bounds_clump%clump_index
+      dtime = real(get_step_size(),r8)
       
       ! Summarize Net Fluxes
       do s = 1, this%fates(nc)%nsites
@@ -1953,7 +1965,7 @@ contains
       call this%fates_hist%update_history_cbal(nc, &
                                this%fates(nc)%nsites,  &
                                this%fates(nc)%sites,   &
-                               this%fates(nc)%bc_in, &
+                               this%fates(nc)%bc_in,   &
                                dtime)
 
       
@@ -2010,7 +2022,7 @@ contains
    use FatesIOVariableKindMod, only : site_scagpft_r8, site_agepft_r8
    use FatesIOVariableKindMod, only : site_height_r8, site_elem_r8, site_elpft_r8
    use FatesIOVariableKindMod, only : site_elcwd_r8, site_elage_r8
-
+   use FatesIOVariableKindMod, only : site_coage_r8, site_coage_pft_r8
    use FatesIOVariableKindMod, only : site_can_r8, site_cnlf_r8, site_cnlfpft_r8
    use FatesIODimensionsMod, only : fates_bounds_type
 
@@ -2143,7 +2155,7 @@ contains
              site_age_r8, site_height_r8, site_fuel_r8, site_cwdsc_r8, &
              site_can_r8,site_cnlf_r8, site_cnlfpft_r8, site_scag_r8, & 
              site_scagpft_r8, site_agepft_r8, site_elem_r8, site_elpft_r8, &
-             site_elcwd_r8, site_elage_r8)
+             site_elcwd_r8, site_elage_r8, site_coage_r8, site_coage_pft_r8)
 
            d_index = this%fates_hist%dim_kinds(dk_index)%dim2_index
            dim2name = this%fates_hist%dim_bounds(d_index)%name
@@ -2260,40 +2272,20 @@ contains
     do s = 1, this%fates(nc)%nsites
        c = this%f2hmap(nc)%fcolumn(s)
        nlevsoil = this%fates(nc)%bc_in(s)%nlevsoil
+
+       ! This is the water removed from the soil layers by roots (or added)
        col_wf%qflx_rootsoi(c,1:nlevsoil) = &
             this%fates(nc)%bc_out(s)%qflx_soil2root_sisl(1:nlevsoil)
+
+       ! This is the total amount of water transferred to surface runoff
+       ! (this is generated potentially from supersaturating soils
+       ! (currently this is unnecessary)
+       ! waterflux_inst%qflx_drain_vr_col(c,1:nlevsoil) = &
+       !           this%fates(nc)%bc_out(s)%qflx_ro_sisl(1:nlevsoil)
+       
     end do
     
  end subroutine ComputeRootSoilFlux
-
- ! ======================================================================================
-!
-! THIS WAS MOVED TO WRAP_HYDRAULICS_DRIVE()
-!
-! subroutine TransferPlantWaterStorage(this, bounds_clump, nc, waterstate_inst)
-!   
-!   implicit none
-!   class(hlm_fates_interface_type), intent(inout) :: this
-!   type(bounds_type),intent(in)                   :: bounds_clump
-!   integer,intent(in)                             :: nc
-!   type(waterstate_type)   , intent(inout)        :: waterstate_inst
-!
-!   ! locals
-!   integer :: s
-!   integer :: c 
-!   
-!   if (.not. (use_fates .and. use_fates_planthydro) ) return
-!   
-!   do s = 1, this%fates(nc)%nsites
-!      c = this%f2hmap(nc)%fcolumn(s)
-!      col_ws%total_plant_stored_h2o(c) = &
-!            this%fates(nc)%bc_out(s)%plant_stored_h2o_si
-!   end do
-!   return
-!end subroutine TransferPlantWaterStorage
-
-
-
 
  ! ======================================================================================
 
@@ -2329,7 +2321,7 @@ contains
    if ( .not.use_fates_planthydro ) return
 
    nc = bounds_clump%clump_index
-   dtime = get_step_size()
+   dtime = real(get_step_size(),r8)
 
    ! Prepare Input Boundary Conditions
    ! ------------------------------------------------------------------------------------
@@ -2401,7 +2393,7 @@ contains
    call this%fates_hist%update_history_hydraulics(nc, &
          this%fates(nc)%nsites, &
          this%fates(nc)%sites, &
-         this%fates(nc)%bc_in, &
+         this%fates(nc)%bc_in, & 
          dtime)
 
 
@@ -2422,6 +2414,7 @@ contains
    use EDtypesMod,        only : nclmax_fates     => nclmax
    use clm_varpar,        only : nlevgrnd
    use FatesInterfaceMod, only : numpft_fates     => numpft
+   use FatesInterfaceMod, only : nlevcoage
 
    implicit none
 
@@ -2491,6 +2484,11 @@ contains
    fates%elage_begin = 1
    fates%elage_end   = num_elements * nlevage_fates
 
+   fates%coagepf_class_begin = 1
+   fates%coagepf_class_end = nlevcoage * numpft_fates
+   
+   fates%coage_class_begin = 1
+   fates%coage_class_end = nlevcoage
    
  end subroutine hlm_bounds_to_fates_bounds
 
