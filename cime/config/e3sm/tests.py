@@ -21,7 +21,7 @@ _TESTS = {
             "ERS.f19_g16.I1850CNECACNTBC.clm-eca",
             "ERS.f19_g16.I1850CNECACTCBC.clm-eca",
             "SMS_Ly2_P1x1.1x1_smallvilleIA.ICLM45CNCROP.clm-force_netcdf_pio",
-            "ERS_Ld3.f45_f45.ICLM45ED.clm-fates",
+            "ERS_Ld20.f45_f45.ICLM45ED.clm-fates",
             "ERS.f19_g16.I1850CLM45.clm-betr",
             "ERS.f19_g16.I1850CLM45.clm-vst",
             "ERS.f09_g16.I1850CLM45CN.clm-bgcinterface",
@@ -59,6 +59,7 @@ _TESTS = {
             "PET_Ln5.ne4_ne4.FC5AV1C-L.allactive-mach-pet",
             "PEM_Ln5.ne4_ne4.FC5AV1C-L",
             "SMS_D_Ln5.ne4_ne4.FC5AV1C-L.cam-cosplite_nhtfrq5",
+            "SMS_Ln1.ne4_ne4.FC5AV1C-L.cam-chem_pp",
             "ERS_Ld5.ne4_ne4.FC5AV1C-L.cam-rrtmgp",
             "ERS_Ld5.ne4_ne4.FC5AV1C-L.cam-gust_param",
             "REP_Ln5.ne4_ne4.FC5AV1C-L",
@@ -132,8 +133,8 @@ _TESTS = {
             "HOMME_P24.f19_g16_rx1.A",
             "HOMMEBFB_P24.f19_g16_rx1.A",
             )
-        },    
-    
+        },
+
     "e3sm_integration" : {
         "inherit" : ("e3sm_developer", "e3sm_atm_integration"),
         "time"    : "03:00:00",
@@ -326,7 +327,7 @@ _TESTS = {
     "e3sm_bench_lores_g" : {
         "share"    : True,
         "time"     : "01:00:00",
-        "tests"    : ( 
+        "tests"    : (
                  "PFS_P320.T62_oEC60to30v3.GMPAS-IAF.bench-gmpas_noio",
                  "PFS_P480.T62_oEC60to30v3.GMPAS-IAF.bench-gmpas_noio",
                  "PFS_P640.T62_oEC60to30v3.GMPAS-IAF.bench-gmpas_noio",
