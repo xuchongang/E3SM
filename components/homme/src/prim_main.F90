@@ -27,10 +27,7 @@ program prim_main
   use arkode_mod,       only: calc_nonlinear_stats, finalize_nonlinear_stats
 #endif
   use compose_test_mod, only: compose_test
-
-#ifdef VERTICAL_INTERPOLATION
-  use netcdf_interp_mod, only: netcdf_interp_init, netcdf_interp_write, netcdf_interp_finish
-#endif
+  use test_mod,         only: print_test_results
 
 #ifdef PIO_INTERP
   use interp_movie_mod, only : interp_movie_output, interp_movie_finish, interp_movie_init
@@ -41,6 +38,16 @@ program prim_main
 #endif
 
   implicit none
+
+#if defined(HOMMEXX_BFB_TESTING) && !KOKKOS_TARGET
+  interface
+    subroutine initialize_kokkos_f90() bind(c)
+    end subroutine initialize_kokkos_f90
+
+    subroutine finalize_kokkos_f90() bind(c)
+    end subroutine finalize_kokkos_f90
+  end interface
+#endif
 
   type (element_t),  pointer  :: elem(:)
   type (hybrid_t)             :: hybrid         ! parallel structure for shared memory/distributed memory
@@ -64,6 +71,10 @@ program prim_main
   ! Begin executable code set distributed memory world...
   ! =====================================================
   par=initmp()
+
+#if defined(HOMMEXX_BFB_TESTING) && !KOKKOS_TARGET
+  call initialize_kokkos_f90();
+#endif
 
   ! =====================================
   ! Set number of threads...
@@ -132,13 +143,6 @@ program prim_main
 
 
 
-#ifdef PIO_INTERP
-  if(runtype<0) then
-     ! Interpolate a netcdf file from one grid to another
-     call interpolate_driver(elem, hybrid)
-     call haltmp('interpolation complete')
-  end if
-#endif
   ! this should really be called from test_mod.F90, but it has be be called outside
   ! the threaded region
   if (infilenames(1)/='') call pio_read_phis(elem,hybrid%par)
@@ -193,9 +197,7 @@ program prim_main
 ! initialize history files.  filename constructed with restart time
 ! so we have to do this after ReadRestart in prim_init2 above
   call t_startf('prim_io_init')
-#ifdef VERTICAL_INTERPOLATION
-  call netcdf_interp_init(elem, hybrid, hvcoord)
-#elif defined PIO_INTERP
+#if defined PIO_INTERP
   call interp_movie_init( elem, par,  hvcoord, tl )
 #else
   call prim_movie_init( elem, par, hvcoord, tl )
@@ -205,9 +207,7 @@ program prim_main
   ! output initial state for NEW runs (not restarts or branch runs)
   if (runtype == 0 ) then
      if(par%masterproc) print *,"Output of initial state..."
-#ifdef VERTICAL_INTERPOLATION
-    call netcdf_interp_write(elem, tl, hybrid, hvcoord)
-#elif defined PIO_INTERP
+#if defined PIO_INTERP
      call interp_movie_output(elem, tl, par, 0d0, hvcoord=hvcoord)
 #else
      call prim_movie_output(elem, tl, hvcoord, par)
@@ -238,9 +238,7 @@ program prim_main
      !$OMP END PARALLEL
 #endif
 
-#ifdef VERTICAL_INTERPOLATION
-     call netcdf_interp_write(elem, tl, hybrid, hvcoord)
-#elif defined PIO_INTERP
+#if defined PIO_INTERP
      call interp_movie_output(elem, tl, par, 0d0,hvcoord=hvcoord)
 #else
      call prim_movie_output(elem, tl, hvcoord, par)
@@ -259,9 +257,9 @@ program prim_main
   call prim_finalize()
   if(par%masterproc) print *,"closing history files"
 
-#ifdef VERTICAL_INTERPOLATION
-  call netcdf_interp_finish
-#elif defined PIO_INTERP
+  call print_test_results(elem, tl, hvcoord, par)
+
+#if defined PIO_INTERP
   call interp_movie_finish
 #else
   call prim_movie_finish
@@ -272,6 +270,11 @@ program prim_main
     call finalize_nonlinear_stats(par%comm, par%rank, par%root, par%nprocs)
   endif
 #endif
+
+#if defined(HOMMEXX_BFB_TESTING) && !KOKKOS_TARGET
+  call finalize_kokkos_f90();
+#endif
+
 
   call t_stopf('Total')
   if(par%masterproc) print *,"writing timing data"

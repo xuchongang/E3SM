@@ -16,6 +16,10 @@
 #include <iostream>
 #include <sstream>
 
+#ifdef _OPENMP
+# include <omp.h>
+#endif
+
 #include <Kokkos_Core.hpp>
 
 #ifdef SIQK_TIME
@@ -2329,6 +2333,16 @@ int waitall (int count, Request* reqs, MPI_Status* stats = nullptr) {
                      stats ? stats : MPI_STATUS_IGNORE);
 #endif
 }
+
+int wait (Request* req, MPI_Status* stat = nullptr) {
+#ifdef COMPOSE_DEBUG_MPI
+  const auto out = MPI_Wait(&req->request, stat ? stat : MPI_STATUS_IGNORE);
+  req->unfreed--;
+  return out;
+#else
+  return MPI_Wait(reinterpret_cast<MPI_Request*>(req), stat ? stat : MPI_STATUS_IGNORE);
+#endif
+}
 } // namespace mpi
 
 namespace cslmpi {
@@ -2403,7 +2417,7 @@ struct ListOfLists {
 
   ListOfLists () {}
   ListOfLists (const Int nlist, const Int* nlist_per_list) { init(nlist, nlist_per_list); }
-  void init (const Int nlist, const Int* nlist_per_list) {
+  void init (const Int nlist, const Int* nlist_per_list, T* buf = nullptr) {
     slmm_assert(nlist >= 0); 
     ptr_.resize(nlist+1);
     ptr_[0] = 0;
@@ -2411,7 +2425,12 @@ struct ListOfLists {
       slmm_assert(nlist_per_list[i] >= 0);
       ptr_[i+1] = ptr_[i] + nlist_per_list[i];
     }
-    d_.resize(ptr_.back());
+    if (buf) {
+      d_ = buf;
+    } else {
+      v_.resize(ptr_.back());
+      d_ = v_.data();
+    }
   }
 
   Int n () const { return static_cast<Int>(ptr_.size()) - 1; }
@@ -2436,10 +2455,11 @@ struct ListOfLists {
 
 private:
   friend class BufferLayoutArray;
-  std::vector<T> d_;
+  std::vector<T> v_;
   std::vector<Int> ptr_;
-  T* data () { return d_.data(); }
-  const T* data () const { return d_.data(); }
+  T* d_;
+  T* data () { return d_; }
+  const T* data () const { return d_; }
 };
 
 struct LayoutTriple {
@@ -2585,12 +2605,16 @@ struct CslMpi {
   ListOfLists<Real> sendbuf, recvbuf;
   FixedCapList<Int> sendcount;
   FixedCapList<mpi::Request> sendreq, recvreq;
+  FixedCapList<Int> rmt_xs, rmt_qs_extrema, x_bulkdata_offset;
+  Int nrmt_xs, nrmt_qs_extrema;
 
   bool horiz_openmp;
 #ifdef HORIZ_OPENMP
   ListOfLists<omp_lock_t> ri_lidi_locks;
 #endif
 
+  // temporary work space
+  std::vector<Int> nlid_per_rank, sendsz, recvsz;
   Array<Real**> rwork;
 
   CslMpi (const mpi::Parallel::Ptr& ip, const slmm::Advecter::ConstPtr& advecter,
@@ -3151,6 +3175,7 @@ void set_idx2_maps (CslMpi& cm, const Rank2Gids& rank2rmtgids,
   cm.sendcount.reset_capacity(i, true);
   cm.sendreq.reset_capacity(i, true);
   cm.recvreq.reset_capacity(i, true);
+  cm.x_bulkdata_offset.reset_capacity(i, true);
 
   const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
   std::vector<std::map<Int, Int> > lor2idx(nrmtrank);
@@ -3192,8 +3217,8 @@ void set_idx2_maps (CslMpi& cm, const Rank2Gids& rank2rmtgids,
 // has a 1-halo patch of bulk data. For a 1-halo, allocations in this routine
 // use essentially the same amount of memory, but not more. We could use less if
 // we were willing to realloc space at each SL time step.
-void alloc_mpi_buffers (CslMpi& cm, const Rank2Gids& rank2rmtgids,
-                        const Rank2Gids& rank2owngids) {
+void size_mpi_buffers (CslMpi& cm, const Rank2Gids& rank2rmtgids,
+                       const Rank2Gids& rank2owngids) {
   const auto myrank = cm.p->rank();
   // sizeof real, int, single int (b/c of alignment)
   const Int sor = sizeof(Real), soi = sizeof(Int), sosi = sor;
@@ -3216,29 +3241,43 @@ void alloc_mpi_buffers (CslMpi& cm, const Rank2Gids& rank2rmtgids,
 
   slmm_assert(cm.ranks.back() == myrank);
   const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
-  std::vector<Int> nlid_per_rank(nrmtrank), sendsz(nrmtrank), recvsz(nrmtrank);
+  cm.nlid_per_rank.resize(nrmtrank);
+  cm.sendsz.resize(nrmtrank);
+  cm.recvsz.resize(nrmtrank);
+  Int rmt_xs_sz = 0, rmt_qse_sz = 0;
   for (Int ri = 0; ri < nrmtrank; ++ri) {
     const auto& rmtgids = rank2rmtgids.at(cm.ranks(ri));
     const auto& owngids = rank2owngids.at(cm.ranks(ri));
-    nlid_per_rank[ri] = rmtgids.size();
-    sendsz[ri] = bytes2real(std::max(xbufcnt(rmtgids, owngids),
-                                     qbufcnt(owngids, rmtgids)));
-    recvsz[ri] = bytes2real(std::max(xbufcnt(owngids, rmtgids),
-                                     qbufcnt(rmtgids, owngids)));
+    cm.nlid_per_rank[ri] = rmtgids.size();
+    cm.sendsz[ri] = bytes2real(std::max(xbufcnt(rmtgids, owngids),
+                                        qbufcnt(owngids, rmtgids)));
+    cm.recvsz[ri] = bytes2real(std::max(xbufcnt(owngids, rmtgids),
+                                        qbufcnt(rmtgids, owngids)));
+    rmt_xs_sz  += 5*cm.np2*cm.nlev*rmtgids.size();
+    rmt_qse_sz += 4       *cm.nlev*rmtgids.size();
   }
+  cm.rmt_xs.reset_capacity(rmt_xs_sz, true);
+  cm.rmt_qs_extrema.reset_capacity(rmt_qse_sz, true);
+}
+
+void alloc_mpi_buffers (CslMpi& cm, Real* sendbuf = nullptr, Real* recvbuf = nullptr) {
+  const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
   cm.nx_in_rank.reset_capacity(nrmtrank, true);
-  cm.nx_in_lid.init(nrmtrank, nlid_per_rank.data());
-  cm.bla.init(nrmtrank, nlid_per_rank.data(), cm.nlev);
-  cm.sendbuf.init(nrmtrank, sendsz.data());
-  cm.recvbuf.init(nrmtrank, recvsz.data());
+  cm.nx_in_lid.init(nrmtrank, cm.nlid_per_rank.data());
+  cm.bla.init(nrmtrank, cm.nlid_per_rank.data(), cm.nlev);
+  cm.sendbuf.init(nrmtrank, cm.sendsz.data(), sendbuf);
+  cm.recvbuf.init(nrmtrank, cm.recvsz.data(), recvbuf);
+  cm.nlid_per_rank.clear();
+  cm.sendsz.clear();
+  cm.recvsz.clear();
 #ifdef HORIZ_OPENMP
-  cm.ri_lidi_locks.init(nrmtrank, nlid_per_rank.data());
+  cm.ri_lidi_locks.init(nrmtrank, cm.nlid_per_rank.data());
   for (Int ri = 0; ri < nrmtrank; ++ri) {
     auto&& locks = cm.ri_lidi_locks(ri);
     for (auto& lock: locks)
       omp_init_lock(&lock);
   }
-#endif
+#endif  
 }
 
 // At simulation initialization, set up a bunch of stuff to make the work at
@@ -3252,7 +3291,7 @@ void setup_comm_pattern (CslMpi& cm, const Int* nbr_id_rank, const Int* nirptr) 
     comm_lid_on_rank(cm, rank2rmtgids, rank2owngids, gid2rmt_owning_lid);
     set_idx2_maps(cm, rank2rmtgids, gid2rmt_owning_lid);
   }
-  alloc_mpi_buffers(cm, rank2rmtgids, rank2owngids);
+  size_mpi_buffers(cm, rank2rmtgids, rank2owngids);
 }
 
 // mylid_with_comm(rankidx) is a list of element LIDs that have relations with
@@ -3343,7 +3382,6 @@ void isend (CslMpi& cm, const bool want_req = true, const bool skip_if_empty = f
 # pragma omp master
 #endif
   {
-    slmm_assert( ! (skip_if_empty && want_req));
     const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
     for (Int ri = 0; ri < nrmtrank; ++ri) {
       if (skip_if_empty && cm.sendcount(ri) == 0) continue;
@@ -3360,6 +3398,21 @@ void recv_and_wait_on_send (CslMpi& cm) {
   {
     mpi::waitall(cm.sendreq.n(), cm.sendreq.data());
     mpi::waitall(cm.recvreq.n(), cm.recvreq.data());
+  }
+#ifdef HORIZ_OPENMP
+# pragma omp barrier
+#endif
+}
+
+void wait_on_send (CslMpi& cm, const bool skip_if_empty = false) {
+#ifdef HORIZ_OPENMP
+# pragma omp master
+#endif
+  {
+    for (Int ri = 0; ri < cm.sendreq.n(); ++ri) {
+      if (skip_if_empty && cm.sendcount(ri) == 0) continue;
+      mpi::wait(&cm.sendreq(ri));
+    }
   }
 #ifdef HORIZ_OPENMP
 # pragma omp barrier
@@ -3472,17 +3525,18 @@ Int getbuf (Buffer& buf, const Int& os, Int& i1, Int& i2) {
 }
 
 /* Pack the departure points (x). We use two passes. We also set up the q
-   metadata. Two passes lets us do some efficient tricks that are not available
+   metadata. Two passes let us do some efficient tricks that are not available
    with one pass. Departure point and q messages are formatted as follows:
-    xs: (#x-in-rank    int
-         pad           i
-         (lid-on-rank  i     only packed if #x in lid > 0
-          #x-in-lid    i     > 0
-          (lev         i     only packed if #x in (lid,lev) > 0
-           #x          i     > 0
-           x         3 real
-            *#x) *#lev) *#lid) *#rank
-    qs: (q-extrema    2 qsize r    (min, max) packed together
+    xs: (#x-in-rank         int                                     <-
+         x-bulk-data-offset i                                        |
+         (lid-on-rank       i     only packed if #x in lid > 0       |
+          #x-in-lid         i     > 0                                |- meta data
+          (lev              i     only packed if #x in (lid,lev) > 0 |
+           #x)              i     > 0                                |
+              *#lev) *#lid                                          <-
+         x                  3 real                                  <-- bulk data
+          *#x-in-rank) *#rank
+    qs: (q-extrema    2 qsize r   (min, max) packed together
          q              qsize r
           *#x) *#lev *#lid *#rank
  */
@@ -3494,17 +3548,24 @@ void pack_dep_points_sendbuf_pass1 (CslMpi& cm) {
   for (Int ri = 0; ri < nrmtrank; ++ri) {
     auto&& sendbuf = cm.sendbuf(ri);
     const auto&& lid_on_rank = cm.lid_on_rank(ri);
-    Int xos = 0, qos = 0;
-    xos += setbuf(sendbuf, xos, cm.nx_in_rank(ri), 0 /* empty space for alignment */);
+    // metadata offset, x bulk data offset, q bulk data offset
+    Int mos = 0, xos = 0, qos = 0, sendcount = 0, cnt;
+    cnt = setbuf(sendbuf, mos, 0, 0); // empty space for later
+    mos += cnt;
+    sendcount += cnt;
     if (cm.nx_in_rank(ri) == 0) {
-      cm.sendcount(ri) = xos;
+      setbuf(sendbuf, 0, mos, 0);
+      cm.x_bulkdata_offset(ri) = mos;
+      cm.sendcount(ri) = sendcount;
       continue;
     }
     auto&& bla = cm.bla(ri);
-    for (Int lidi = 0, lidn = cm.lid_on_rank(ri).n(); lidi < lidn; ++lidi) {
+    for (Int lidi = 0, lidn = lid_on_rank.n(); lidi < lidn; ++lidi) {
       auto nx_in_lid = cm.nx_in_lid(ri,lidi);
       if (nx_in_lid == 0) continue;
-      xos += setbuf(sendbuf, xos, lid_on_rank(lidi), nx_in_lid);
+      cnt = setbuf(sendbuf, mos, lid_on_rank(lidi), nx_in_lid);
+      mos += cnt;
+      sendcount += cnt;
       for (Int lev = 0; lev < cm.nlev; ++lev) {
         auto& t = bla(lidi,lev);
         t.qptr = qos;
@@ -3515,15 +3576,19 @@ void pack_dep_points_sendbuf_pass1 (CslMpi& cm) {
           continue;
         }
         slmm_assert_high(nx > 0);
-        const auto dos = setbuf(sendbuf, xos, lev, nx);
-        t.xptr = xos + dos;
-        xos += dos + 3*nx;
+        const auto dos = setbuf(sendbuf, mos, lev, nx);
+        mos += dos;
+        sendcount += dos + 3*nx;
+        t.xptr = xos;
+        xos += 3*nx;
         qos += 2 + nx;
         nx_in_lid -= nx;
       }
       slmm_assert(nx_in_lid == 0);
     }
-    cm.sendcount(ri) = xos;
+    setbuf(sendbuf, 0, mos /* offset to x bulk data */, cm.nx_in_rank(ri));
+    cm.x_bulkdata_offset(ri) = mos;
+    cm.sendcount(ri) = sendcount;
   }
 }
 
@@ -3555,7 +3620,7 @@ void pack_dep_points_sendbuf_pass2 (CslMpi& cm, const FA4<const Real>& dep_point
           auto& t = cm.bla(ri,lidi,lev);
           qptr = t.qptr;
           cnt = t.cnt;
-          xptr = t.xptr + 3*cnt;
+          xptr = cm.x_bulkdata_offset(ri) + t.xptr + 3*cnt;
           ++t.cnt;
         }
 #ifdef HORIZ_OPENMP
@@ -3601,6 +3666,27 @@ void calc_q_extrema (CslMpi& cm, const Int& nets, const Int& nete) {
   }  
 }
 
+static inline Real
+calc_q_use_q (const Real rx[4], const Real ry[4], const Real* const qs) {
+  return (ry[0]*(rx[0]*qs[ 0] + rx[1]*qs[ 1] + rx[2]*qs[ 2] + rx[3]*qs[ 3]) +
+          ry[1]*(rx[0]*qs[ 4] + rx[1]*qs[ 5] + rx[2]*qs[ 6] + rx[3]*qs[ 7]) +
+          ry[2]*(rx[0]*qs[ 8] + rx[1]*qs[ 9] + rx[2]*qs[10] + rx[3]*qs[11]) +
+          ry[3]*(rx[0]*qs[12] + rx[1]*qs[13] + rx[2]*qs[14] + rx[3]*qs[15]));
+}
+
+static inline Real
+calc_q_use_qdp (const Real rx[4], const Real ry[4],
+                const Real* const dp, const Real* const qdp) {
+  return (ry[0]*(rx[0]*(qdp[ 0]/dp[ 0]) + rx[1]*(qdp[ 1]/dp[ 1])  +
+                 rx[2]*(qdp[ 2]/dp[ 2]) + rx[3]*(qdp[ 3]/dp[ 3])) +
+          ry[1]*(rx[0]*(qdp[ 4]/dp[ 4]) + rx[1]*(qdp[ 5]/dp[ 5])  +
+                 rx[2]*(qdp[ 6]/dp[ 6]) + rx[3]*(qdp[ 7]/dp[ 7])) +
+          ry[2]*(rx[0]*(qdp[ 8]/dp[ 8]) + rx[1]*(qdp[ 9]/dp[ 9])  +
+                 rx[2]*(qdp[10]/dp[10]) + rx[3]*(qdp[11]/dp[11])) +
+          ry[3]*(rx[0]*(qdp[12]/dp[12]) + rx[1]*(qdp[13]/dp[13])  +
+                 rx[2]*(qdp[14]/dp[14]) + rx[3]*(qdp[15]/dp[15])));
+}
+
 template <Int np>
 void calc_q (const CslMpi& cm, const Int& src_lid, const Int& lev,
              const Real* const dep_point, Real* const q_tgt, const bool use_q) {
@@ -3632,83 +3718,154 @@ void calc_q (const CslMpi& cm, const Int& src_lid, const Int& lev,
   const auto& ed = cm.ed(src_lid);
   const Int levos = np*np*lev;
   const Int np2nlev = np*np*cm.nlev;
+  const Int qsize = cm.qsize;
+  static const Int blocksize = 8;
   if (use_q) {
     // We can use q from calc_q_extrema.
     const Real* const qs0 = ed.q + levos;
     // It was found that Intel 18 produced code that was not BFB between runs
     // due to this pragma.
     //#pragma ivdep
-    for (Int iq = 0; iq < cm.qsize; ++iq) {
-      const Real* const qs = qs0 + iq*np2nlev;
-      q_tgt[iq] =
-        (ry[0]*(rx[0]*qs[ 0] + rx[1]*qs[ 1] + rx[2]*qs[ 2] + rx[3]*qs[ 3]) +
-         ry[1]*(rx[0]*qs[ 4] + rx[1]*qs[ 5] + rx[2]*qs[ 6] + rx[3]*qs[ 7]) +
-         ry[2]*(rx[0]*qs[ 8] + rx[1]*qs[ 9] + rx[2]*qs[10] + rx[3]*qs[11]) +
-         ry[3]*(rx[0]*qs[12] + rx[1]*qs[13] + rx[2]*qs[14] + rx[3]*qs[15]));
+    for (Int iqo = 0; iqo < qsize; iqo += blocksize) {
+      // So, instead, provide the compiler with a clear view of
+      // ivdep-ness. Write to tmp here in chunks of blocksize, then
+      // move tmp to q_tgt later.
+      if (iqo + blocksize <= qsize) {
+        Real tmp[blocksize];
+        for (Int iqi = 0; iqi < blocksize; ++iqi) {
+          const Real* const qs = qs0 + (iqo + iqi)*np2nlev;
+          tmp[iqi] = calc_q_use_q(rx, ry, qs);
+        }
+        for (Int iqi = 0; iqi < blocksize; ++iqi)
+          q_tgt[iqo + iqi] = tmp[iqi];
+      } else {
+        for (Int iq = iqo; iq < qsize; ++iq) {
+          const Real* const qs = qs0 + iq*np2nlev;
+          q_tgt[iq] = calc_q_use_q(rx, ry, qs);
+        }
+      }
     }
   } else {
     // q from calc_q_extrema is being overwritten, so have to use qdp/dp.
     const Real* const dp = ed.dp + levos;
     const Real* const qdp0 = ed.qdp + levos;
-    // I'm commented out this pragma, too, to be safe.
+    // I'm commenting out this pragma, too, to be safe.
     //#pragma ivdep
-    for (Int iq = 0; iq < cm.qsize; ++iq) {
-      const Real* const qdp = qdp0 + iq*np2nlev;
-      q_tgt[iq] = (ry[0]*(rx[0]*(qdp[ 0]/dp[ 0]) + rx[1]*(qdp[ 1]/dp[ 1])  +
-                          rx[2]*(qdp[ 2]/dp[ 2]) + rx[3]*(qdp[ 3]/dp[ 3])) +
-                   ry[1]*(rx[0]*(qdp[ 4]/dp[ 4]) + rx[1]*(qdp[ 5]/dp[ 5])  +
-                          rx[2]*(qdp[ 6]/dp[ 6]) + rx[3]*(qdp[ 7]/dp[ 7])) +
-                   ry[2]*(rx[0]*(qdp[ 8]/dp[ 8]) + rx[1]*(qdp[ 9]/dp[ 9])  +
-                          rx[2]*(qdp[10]/dp[10]) + rx[3]*(qdp[11]/dp[11])) +
-                   ry[3]*(rx[0]*(qdp[12]/dp[12]) + rx[1]*(qdp[13]/dp[13])  +
-                          rx[2]*(qdp[14]/dp[14]) + rx[3]*(qdp[15]/dp[15])));
+    for (Int iqo = 0; iqo < qsize; iqo += blocksize) {
+      // And I'm using the same technique as above.
+      if (iqo + blocksize <= qsize) {
+        Real tmp[blocksize];
+        for (Int iqi = 0; iqi < blocksize; ++iqi) {
+          const Real* const qdp = qdp0 + (iqo + iqi)*np2nlev;
+          tmp[iqi] = calc_q_use_qdp(rx, ry, dp, qdp);
+        }
+        for (Int iqi = 0; iqi < blocksize; ++iqi)
+          q_tgt[iqo + iqi] = tmp[iqi];
+      } else {
+        for (Int iq = iqo; iq < qsize; ++iq) {
+          const Real* const qdp = qdp0 + iq*np2nlev;
+          q_tgt[iq] = calc_q_use_qdp(rx, ry, dp, qdp);
+        }
+      }
     }
   }
 }
 
 template <Int np>
-void calc_rmt_q (CslMpi& cm) {
-  const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
+void calc_rmt_q_pass1 (CslMpi& cm) {
+#ifdef HORIZ_OPENMP
+# pragma omp master
+#endif
+  {
+    const Int nrmtrank = static_cast<Int>(cm.ranks.size()) - 1;
+    Int cnt = 0, qcnt = 0;
+    for (Int ri = 0; ri < nrmtrank; ++ri) {
+      const auto&& xs = cm.recvbuf(ri);
+      Int mos = 0, qos = 0, nx_in_rank, xos;
+      mos += getbuf(xs, mos, xos, nx_in_rank);
+      if (nx_in_rank == 0) {
+        cm.sendcount(ri) = 0;
+        continue; 
+      }
+      // The upper bound is to prevent an inf loop if the msg is corrupted.
+      for (Int lidi = 0; lidi < cm.nelemd; ++lidi) {
+        Int lid, nx_in_lid;
+        mos += getbuf(xs, mos, lid, nx_in_lid);
+        for (Int levi = 0; levi < cm.nlev; ++levi) { // same re: inf loop
+          Int lev, nx;
+          mos += getbuf(xs, mos, lev, nx);
+          slmm_assert(nx > 0);
+          {
+            cm.rmt_qs_extrema(4*qcnt + 0) = ri;
+            cm.rmt_qs_extrema(4*qcnt + 1) = lid;
+            cm.rmt_qs_extrema(4*qcnt + 2) = lev;
+            cm.rmt_qs_extrema(4*qcnt + 3) = qos;
+            ++qcnt;
+            qos += 2;
+          }
+          for (Int xi = 0; xi < nx; ++xi) {
+            cm.rmt_xs(5*cnt + 0) = ri;
+            cm.rmt_xs(5*cnt + 1) = lid;
+            cm.rmt_xs(5*cnt + 2) = lev;
+            cm.rmt_xs(5*cnt + 3) = xos;
+            cm.rmt_xs(5*cnt + 4) = qos;
+            ++cnt;
+            xos += 3;
+            ++qos;
+          }
+          nx_in_lid -= nx;
+          nx_in_rank -= nx;
+          if (nx_in_lid == 0) break;
+        }
+        slmm_assert(nx_in_lid == 0);
+        if (nx_in_rank == 0) break;
+      }
+      slmm_assert(nx_in_rank == 0);
+      cm.sendcount(ri) = cm.qsize*qos;
+    }
+    cm.nrmt_xs = cnt;
+    cm.nrmt_qs_extrema = qcnt;
+  }
+#ifdef HORIZ_OPENMP
+# pragma omp barrier
+#endif  
+}
+
+template <Int np>
+void calc_rmt_q_pass2 (CslMpi& cm) {
+  const Int qsize = cm.qsize;
+
 #ifdef HORIZ_OPENMP
 # pragma omp for
 #endif
-  for (Int ri = 0; ri < nrmtrank; ++ri) {
+  for (Int it = 0; it < cm.nrmt_qs_extrema; ++it) {
+    const Int
+      ri = cm.rmt_qs_extrema(4*it), lid = cm.rmt_qs_extrema(4*it + 1),
+      lev = cm.rmt_qs_extrema(4*it + 2), qos = qsize*cm.rmt_qs_extrema(4*it + 3);  
+    auto&& qs = cm.sendbuf(ri);
+    const auto& ed = cm.ed(lid);
+    for (Int iq = 0; iq < qsize; ++iq)
+      for (int i = 0; i < 2; ++i)
+        qs(qos + 2*iq + i) = ed.q_extrema(iq, lev, i);
+  }
+
+#ifdef HORIZ_OPENMP
+# pragma omp for
+#endif
+  for (Int it = 0; it < cm.nrmt_xs; ++it) {
+    const Int
+      ri = cm.rmt_xs(5*it), lid = cm.rmt_xs(5*it + 1), lev = cm.rmt_xs(5*it + 2),
+      xos = cm.rmt_xs(5*it + 3), qos = qsize*cm.rmt_xs(5*it + 4);
     const auto&& xs = cm.recvbuf(ri);
     auto&& qs = cm.sendbuf(ri);
-    Int xos = 0, qos = 0, nx_in_rank, padding;
-    xos += getbuf(xs, xos, nx_in_rank, padding);
-    if (nx_in_rank == 0) {
-      cm.sendcount(ri) = 0;
-      continue; 
-    }
-    // The upper bound is to prevent an inf loop if the msg is corrupted.
-    for (Int lidi = 0; lidi < cm.nelemd; ++lidi) {
-      Int lid, nx_in_lid;
-      xos += getbuf(xs, xos, lid, nx_in_lid);
-      const auto& ed = cm.ed(lid);
-      for (Int levi = 0; levi < cm.nlev; ++levi) { // same re: inf loop
-        Int lev, nx;
-        xos += getbuf(xs, xos, lev, nx);
-        slmm_assert(nx > 0);
-        for (Int iq = 0; iq < cm.qsize; ++iq)
-          for (int i = 0; i < 2; ++i)
-            qs(qos + 2*iq + i) = ed.q_extrema(iq, lev, i);
-        qos += 2*cm.qsize;
-        for (Int ix = 0; ix < nx; ++ix) {
-          calc_q<np>(cm, lid, lev, &xs(xos), &qs(qos), true);
-          xos += 3;
-          qos += cm.qsize;
-        }
-        nx_in_lid -= nx;
-        nx_in_rank -= nx;
-        if (nx_in_lid == 0) break;
-      }
-      slmm_assert(nx_in_lid == 0);
-      if (nx_in_rank == 0) break;
-    }
-    slmm_assert(nx_in_rank == 0);
-    cm.sendcount(ri) = qos;
+    calc_q<np>(cm, lid, lev, &xs(xos), &qs(qos), true);
   }
+}
+
+template <Int np>
+void calc_rmt_q (CslMpi& cm) {
+  calc_rmt_q_pass1<np>(cm);
+  calc_rmt_q_pass2<np>(cm);
 }
 
 template <Int np>
@@ -3716,16 +3873,20 @@ void calc_own_q (CslMpi& cm, const Int& nets, const Int& nete,
                  const FA4<const Real>& dep_points,
                  const FA4<Real>& q_min, const FA4<Real>& q_max) {
   const int tid = get_tid();
-  for (Int tci = nets; tci <= nete; ++tci) {
-    const Int ie0 = tci - nets;
+  for (Int tci = 0; tci < cm.nelemd; ++tci) {
     auto& ed = cm.ed(tci);
     const FA3<Real> q_tgt(ed.q, cm.np2, cm.nlev, cm.qsize);
-    for (const auto& e: ed.own) {
+    const Int ned = ed.own.n();
+#ifdef HORIZ_OPENMP
+    #pragma omp for
+#endif
+    for (Int idx = 0; idx < ned; ++idx) {
+      const auto& e = ed.own(idx);
       const Int slid = ed.nbrs(ed.src(e.lev, e.k)).lid_on_rank;
       const auto& sed = cm.ed(slid);
       for (Int iq = 0; iq < cm.qsize; ++iq) {
-        q_min(e.k, e.lev, iq, ie0) = sed.q_extrema(iq, e.lev, 0);
-        q_max(e.k, e.lev, iq, ie0) = sed.q_extrema(iq, e.lev, 1);
+        q_min(e.k, e.lev, iq, tci) = sed.q_extrema(iq, e.lev, 0);
+        q_max(e.k, e.lev, iq, tci) = sed.q_extrema(iq, e.lev, 1);
       }
       Real* const qtmp = &cm.rwork(tid, 0);
       calc_q<np>(cm, slid, e.lev, &dep_points(0, e.k, e.lev, tci), qtmp, false);
@@ -3743,7 +3904,6 @@ void copy_q (CslMpi& cm, const Int& nets,
            end = cm.mylid_with_comm_tid_ptr(tid+1);
        ptr < end; ++ptr) {
     const Int tci = cm.mylid_with_comm(ptr);
-    const Int ie0 = tci - nets;
     auto& ed = cm.ed(tci);
     const FA3<Real> q_tgt(ed.q, cm.np2, cm.nlev, cm.qsize);
     for (const auto& e: ed.rmt) {
@@ -3751,8 +3911,8 @@ void copy_q (CslMpi& cm, const Int& nets,
       const Int ri = ed.nbrs(ed.src(e.lev, e.k)).rank_idx;
       const auto&& recvbuf = cm.recvbuf(ri);
       for (Int iq = 0; iq < cm.qsize; ++iq) {
-        q_min(e.k, e.lev, iq, ie0) = recvbuf(e.q_extrema_ptr + 2*iq    );
-        q_max(e.k, e.lev, iq, ie0) = recvbuf(e.q_extrema_ptr + 2*iq + 1);
+        q_min(e.k, e.lev, iq, tci) = recvbuf(e.q_extrema_ptr + 2*iq    );
+        q_max(e.k, e.lev, iq, tci) = recvbuf(e.q_extrema_ptr + 2*iq + 1);
       }
       for (Int iq = 0; iq < cm.qsize; ++iq) {
         slmm_assert(recvbuf(e.q_ptr + iq) != -1);
@@ -3780,8 +3940,8 @@ void step (
                3, cm.np2, cm.nlev, cm.nelemd);
   const Int nelem = nete - nets + 1;
   const FA4<Real>
-    q_min(q_min_r, cm.np2, cm.nlev, cm.qsize, nelem),
-    q_max(q_max_r, cm.np2, cm.nlev, cm.qsize, nelem);
+    q_min(q_min_r, cm.np2, cm.nlev, cm.qsize, cm.nelemd),
+    q_max(q_max_r, cm.np2, cm.nlev, cm.qsize, cm.nelemd);
 
   // Partition my elements that communicate with remotes among threads, if I
   // haven't done that yet.
@@ -3804,7 +3964,7 @@ void step (
   // Compute the requested q for departure points from remotes.
   calc_rmt_q<np>(cm);
   // Send q data.
-  isend(cm, false /* want_req */, true /* skip_if_empty */);
+  isend(cm, true /* want_req */, true /* skip_if_empty */);
   // Set up to receive q for each of my departure point requests sent to
   // remotes. We can't do this until the OpenMP barrier in isend assures that
   // all threads are done with the receive buffer's departure points.
@@ -3815,10 +3975,10 @@ void step (
   // Receive remote q data and use this to fill in the rest of my fields.
   recv(cm, true /* skip_if_empty */);
   copy_q(cm, nets, q_min, q_max);
-  // Don't need to wait on send buffer again because MPI-level synchronization
-  // outside of SL transport assures the send buffer is ready at the next call
-  // to step. But do need to dealloc the send requests.
+  // Wait on send buffer so it's free to be used by others.
+  wait_on_send(cm, true /* skip_if_empty */);
 }
+
 } // namespace cslmpi
 } // namespace homme
 
@@ -3857,18 +4017,34 @@ void slmm_init_impl (
   homme::Int fcomm, homme::Int transport_alg, homme::Int np,
   homme::Int nlev, homme::Int qsize, homme::Int qsized, homme::Int nelem,
   homme::Int nelemd, homme::Int cubed_sphere_map,
-  const homme::Int** lid2gid, const homme::Int** lid2facenum,
-  const homme::Int** nbr_id_rank, const homme::Int** nirptr,
-  homme::Int sl_nearest_point_lev)
+  const homme::Int* lid2gid, const homme::Int* lid2facenum,
+  const homme::Int* nbr_id_rank, const homme::Int* nirptr,
+  homme::Int sl_nearest_point_lev, homme::Int, homme::Int, homme::Int,
+  homme::Int)
 {
   homme::slmm_init(np, nelem, nelemd, transport_alg, cubed_sphere_map,
-                   sl_nearest_point_lev - 1, *lid2facenum);
+                   sl_nearest_point_lev - 1, lid2facenum);
   slmm_throw_if(homme::g_advecter->is_cisl(),
                 "CISL code was removed.");
   const auto p = homme::mpi::make_parallel(MPI_Comm_f2c(fcomm));
   g_csl_mpi = homme::cslmpi::init(homme::g_advecter, p, np, nlev, qsize,
-                                  qsized, nelemd, *nbr_id_rank, *nirptr,
+                                  qsized, nelemd, nbr_id_rank, nirptr,
                                   2 /* halo */);
+}
+
+void slmm_query_bufsz (homme::Int* sendsz, homme::Int* recvsz) {
+  slmm_assert(g_csl_mpi);
+  homme::Int s = 0, r = 0;
+  for (const auto e : g_csl_mpi->sendsz) s += e;
+  for (const auto e : g_csl_mpi->recvsz) r += e;
+  *sendsz = s;
+  *recvsz = r;
+}
+
+void slmm_set_bufs (homme::Real* sendbuf, homme::Real* recvbuf,
+                    homme::Int, homme::Int) {
+  slmm_assert(g_csl_mpi);
+  homme::cslmpi::alloc_mpi_buffers(*g_csl_mpi, sendbuf, recvbuf);
 }
 
 void slmm_get_mpi_pattern (homme::Int* sl_mpi) {
@@ -3876,12 +4052,12 @@ void slmm_get_mpi_pattern (homme::Int* sl_mpi) {
 }
 
 void slmm_init_local_mesh (
-  homme::Int ie, homme::Cartesian3D** neigh_corners, homme::Int nnc,
-  homme::Cartesian3D* p_inside)
+  homme::Int ie, homme::Cartesian3D* neigh_corners, homme::Int nnc,
+  homme::Cartesian3D* p_inside, homme::Int)
 {
   homme::g_advecter->init_local_mesh_if_needed(
     ie - 1, homme::FA3<const homme::Real>(
-      reinterpret_cast<const homme::Real*>(*neigh_corners), 3, 4, nnc),
+      reinterpret_cast<const homme::Real*>(neigh_corners), 3, 4, nnc),
     reinterpret_cast<const homme::Real*>(p_inside));
 }
 
@@ -3909,6 +4085,7 @@ void slmm_csl (
   homme::Real* minq, homme::Real* maxq, homme::Int* info)
 {
   slmm_assert(g_csl_mpi);
+  slmm_assert(g_csl_mpi->sendsz.empty()); // alloc_mpi_buffers was called
   *info = 0;
   try {
     homme::cslmpi::step<4>(*g_csl_mpi, nets - 1, nete - 1,
@@ -3917,5 +4094,10 @@ void slmm_csl (
     std::cerr << e.what();
     *info = -1;
   }
+}
+
+void slmm_finalize () {
+  g_csl_mpi = nullptr;
+  homme::g_advecter = nullptr;
 }
 } // extern "C"

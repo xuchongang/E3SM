@@ -2,14 +2,18 @@ SET(UNITTESTER_DIR ${CMAKE_CURRENT_SOURCE_DIR} PARENT_SCOPE)
 
 macro(cxx_unit_test target_name target_f90_srcs target_cxx_srcs include_dirs config_defines NUM_CPUS)
   ADD_EXECUTABLE(${target_name} ${UNITTESTER_DIR}/tester.cpp ${target_f90_srcs} ${target_cxx_srcs})
-  IF (${NUM_CPUS} EQUAL 1)
-    ADD_TEST(${target_name}_test ${target_name})
-  ELSE()
-    ADD_TEST(${target_name}_test mpiexec -np ${NUM_CPUS} ${target_name})
-  ENDIF()
+  #add exec to test_execs ,baseline, and check targets in makefile
+  ADD_DEPENDENCIES(test-execs ${target_name})
+  ADD_DEPENDENCIES(baseline ${target_name})
+  ADD_DEPENDENCIES(check ${target_name})
+  #IF (${NUM_CPUS} EQUAL 1)
+  #  ADD_TEST(${target_name}_test ${target_name})
+  #ELSE()
+    ADD_TEST(${target_name}_test ${USE_MPIEXEC} -n ${NUM_CPUS} ${MPI_OPTIONS} "./${target_name}")
+  #ENDIF()
   SET_TESTS_PROPERTIES(${target_name}_test PROPERTIES LABELS "unit")
 
-  TARGET_LINK_LIBRARIES(${target_name} pio timing ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES})
+  TARGET_LINK_LIBRARIES(${target_name} timing ${BLAS_LIBRARIES} ${LAPACK_LIBRARIES} kokkos)
 
   STRING(TOUPPER "${PERFORMANCE_PROFILE}" PERF_PROF_UPPER)
   IF ("${PERF_PROF_UPPER}" STREQUAL "VTUNE")
@@ -19,8 +23,13 @@ macro(cxx_unit_test target_name target_f90_srcs target_cxx_srcs include_dirs con
   IF(UNIX AND NOT APPLE)
     TARGET_LINK_LIBRARIES(${target_name} rt)
   ENDIF()
-
-  link_to_kokkos(${target_name})
+  IF(NOT BUILD_HOMME_WITHOUT_PIOLIBRARY)
+    IF(HOMME_USE_SCORPIO)
+      TARGET_LINK_LIBRARIES(${target_name} piof pioc)
+    ELSE ()
+      TARGET_LINK_LIBRARIES(${target_name} pio)
+    ENDIF ()
+  ENDIF ()
 
   IF (NOT "${target_f90_srcs}" EQUAL "")
     # Fortran modules

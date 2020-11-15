@@ -7,6 +7,9 @@ SET (CMAKE_Fortran_COMPILER mpif90 CACHE FILEPATH "")
 SET (CMAKE_C_COMPILER mpicc CACHE FILEPATH "")
 SET (CMAKE_CXX_COMPILER mpicxx CACHE FILEPATH "")
 
+# Set kokkos arch, to get correct avx flags
+SET (Kokkos_ARCH_BDW ON CACHE BOOL "")
+
 SET (WITH_PNETCDF FALSE CACHE FILEPATH "")
 #
 # anvil module system doesn't set environment variables, but will put
@@ -29,10 +32,24 @@ EXECUTE_PROCESS(COMMAND nc-config --prefix
 )
 SET (NetCDF_C_PATH "${NCCONFIG_OUTPUT}" CACHE STRING "")
 
+EXECUTE_PROCESS(COMMAND mpif90 --version
+  RESULT_VARIABLE CPR_RESULT
+  OUTPUT_VARIABLE CPR_OUTPUT
+  ERROR_VARIABLE  CPR_ERROR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+IF ("${CPR_OUTPUT}" MATCHES "ifort.*")
+  SET (ADD_Fortran_FLAGS "-traceback" CACHE STRING "")
+  SET (ADD_C_FLAGS       "-traceback" CACHE STRING "")
+  SET (ADD_CXX_FLAGS     "-traceback" CACHE STRING "")
+  SET (HOMME_USE_MKL "TRUE" CACHE FILEPATH "") # for Intel
+ELSEIF ("${CPR_OUTPUT}" MATCHES "GNU Fortran.*")
+  SET (MKLROOT $ENV{MKLROOT} CACHE FILEPATH "")
+  SET (HOMME_FIND_BLASLAPACK TRUE CACHE BOOL "")
+endif()
 
 SET (USE_MPIEXEC "srun" CACHE STRING "")
-SET (USE_MPI_OPTIONS "--cpu_bind=cores" CACHE STRING "")
-SET (HOMME_USE_MKL "TRUE" CACHE FILEPATH "") # for Intel
+SET (USE_MPI_OPTIONS "-K --cpu_bind=cores" CACHE STRING "")
 SET (USE_QUEUING FALSE CACHE BOOL "")
 # for standalone HOMME builds:
 SET (CPRNC_DIR /lcrc/group/acme/tools/cprnc CACHE FILEPATH "")
